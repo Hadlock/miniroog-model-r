@@ -84,12 +84,18 @@ impl SynthPipeline {
         self.modifiers.set_contour_amount(value);
     }
 
-    pub fn set_filter_envelope(&mut self, attack: f32, decay: f32, sustain: f32) {
-        self.modifiers.set_filter_envelope(attack, decay, sustain);
+    pub fn set_filter_envelope(&mut self, attack: f32, decay: f32, sustain: f32, release: f32) {
+        self.modifiers
+            .set_filter_envelope(attack, decay, sustain, release);
     }
 
-    pub fn set_loudness_envelope(&mut self, attack: f32, decay: f32, sustain: f32) {
-        self.modifiers.set_loudness_envelope(attack, decay, sustain);
+    pub fn set_loudness_envelope(&mut self, attack: f32, decay: f32, sustain: f32, release: f32) {
+        self.modifiers
+            .set_loudness_envelope(attack, decay, sustain, release);
+    }
+
+    pub fn trigger_envelopes(&mut self) {
+        self.modifiers.force_trigger();
     }
 
     pub fn sample_rate(&self) -> f32 {
@@ -110,6 +116,7 @@ pub struct DebugData {
     buffer: Vec<f32>,
     cursor: usize,
     filled: bool,
+    overload: bool,
 }
 
 impl DebugData {
@@ -118,12 +125,16 @@ impl DebugData {
             buffer: vec![0.0; size],
             cursor: 0,
             filled: false,
+            overload: false,
         }
     }
 
     pub fn push(&mut self, value: f32) {
         if let Some(slot) = self.buffer.get_mut(self.cursor) {
             *slot = value;
+        }
+        if value.abs() > 0.9 {
+            self.overload = true;
         }
         self.cursor = (self.cursor + 1) % self.buffer.len();
         if self.cursor == 0 {
@@ -139,6 +150,12 @@ impl DebugData {
         data.extend_from_slice(&self.buffer[self.cursor..]);
         data.extend_from_slice(&self.buffer[..self.cursor]);
         data
+    }
+
+    pub fn take_overload(&mut self) -> bool {
+        let flag = self.overload;
+        self.overload = false;
+        flag
     }
 }
 

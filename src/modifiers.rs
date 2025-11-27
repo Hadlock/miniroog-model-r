@@ -56,21 +56,21 @@ impl Modifiers {
         self.contour_amount = value.clamp(0.0, 1.0);
     }
 
-    pub fn set_filter_envelope(&mut self, attack: f32, decay: f32, sustain: f32) {
+    pub fn set_filter_envelope(&mut self, attack: f32, decay: f32, sustain: f32, release: f32) {
         self.filter_params = EnvelopeParams {
-            attack: knob_to_env_time(attack, 0.0015, 3.0),
-            decay: knob_to_env_time(decay, 0.005, 4.0),
+            attack,
+            decay,
             sustain: sustain.clamp(0.0, 1.0),
-            release: knob_to_env_time(decay, 0.005, 4.0),
+            release,
         };
     }
 
-    pub fn set_loudness_envelope(&mut self, attack: f32, decay: f32, sustain: f32) {
+    pub fn set_loudness_envelope(&mut self, attack: f32, decay: f32, sustain: f32, release: f32) {
         self.loud_params = EnvelopeParams {
-            attack: knob_to_env_time(attack, 0.001, 4.5),
-            decay: knob_to_env_time(decay, 0.01, 6.0),
+            attack,
+            decay,
             sustain: sustain.clamp(0.0, 1.0),
-            release: knob_to_env_time(decay, 0.01, 6.0),
+            release,
         };
     }
 
@@ -86,6 +86,11 @@ impl Modifiers {
             .process(input, dynamic_cutoff, self.emphasis, dt);
 
         filtered * loud_env
+    }
+
+    pub fn force_trigger(&mut self) {
+        self.filter_env.trigger();
+        self.loud_env.trigger();
     }
 }
 

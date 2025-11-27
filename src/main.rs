@@ -27,10 +27,11 @@ const MAX_ANALYZER_DB: f32 = 20.0;
 const TUNE_RANGE_OCT: f32 = 1.0;
 const GLIDE_MIN_SEC: f32 = 0.0;
 const GLIDE_MAX_SEC: f32 = 0.6;
-const MOD_LFO_FREQ: f32 = 4.5;
 const MOD_DEPTH: f32 = 0.3;
 const CONTROLLER_KNOB_SPACING: f32 = 1.2;
 const OSC_MOD_DEPTH: f32 = 0.18;
+const LFO_RATE_MIN: f32 = 0.2;
+const LFO_RATE_MAX: f32 = 12.0;
 
 const AMBER: Color = Color {
     r: 0.98,
@@ -131,19 +132,27 @@ async fn main() {
         handle_debug_toggle(&mut debug_window, mouse_pos);
         handle_mixer_switches(&mut panel_state, &layout);
         handle_controller_switches(&mut panel_state, &layout);
+        if panel_state.take_s_trigger() {
+            if let Ok(mut synth) = pipeline.lock() {
+                synth.trigger_envelopes();
+            }
+        }
         panel_state.refresh_pitch_target();
         panel_state.update_modulation(dt);
         panel_state.apply_pitch(dt, &vcos);
 
         {
-            let snapshot = {
-                let guard = debug_data.lock().expect("debug lock");
-                guard.snapshot()
+            let (snapshot, overload_flag) = {
+                let mut guard = debug_data.lock().expect("debug lock");
+                let data = guard.snapshot();
+                let overload = guard.take_overload();
+                (data, overload)
             };
             if !snapshot.is_empty() {
                 waveform_cache = snapshot;
                 spectrum_cache = compute_spectrum(&waveform_cache);
             }
+            panel_state.set_overload(overload_flag);
         }
 
         draw_scene(
@@ -187,8 +196,14 @@ struct PanelLayout {
     output_rect: Rect,
     modifier_loudness_split: f32,
     controller_knobs: [Rect; 3],
+    controller_extra_knobs: [Rect; 2],
     controller_mod_toggle: Rect,
     controller_osc3_toggle: Rect,
+    controller_glide_switch: Rect,
+    controller_decay_switch: Rect,
+    controller_s_trigger_button: Rect,
+    controller_mod_source_toggle: Rect,
+    controller_mod_target_toggle: Rect,
     osc_range_knobs: [Rect; 3],
     osc_freq_knobs: [Rect; 3],
     osc_wave_knobs: [Rect; 3],
@@ -277,11 +292,55 @@ fn compute_panel_layout() -> PanelLayout {
         toggle_size.x,
         toggle_size.y,
     );
-    let osc3_toggle = Rect::new(
-        controller_knobs[2].x + controller_knobs[2].w * 0.5 - toggle_size.x * 0.5,
-        controller_knobs[2].y + knob_size + 36.0,
+    let glide_switch = Rect::new(
+        controller_knobs[1].x + controller_knobs[1].w * 0.5 - toggle_size.x * 0.5,
+        controller_knobs[1].y + knob_size + 12.0,
         toggle_size.x,
         toggle_size.y,
+    );
+    let mod_target_toggle = Rect::new(
+        glide_switch.x,
+        glide_switch.y + toggle_size.y + 8.0,
+        toggle_size.x,
+        toggle_size.y,
+    );
+    let osc3_toggle = Rect::new(
+        controller_knobs[2].x + controller_knobs[2].w * 0.5 - toggle_size.x * 0.5,
+        controller_knobs[2].y + knob_size + 12.0,
+        toggle_size.x,
+        toggle_size.y,
+    );
+    let mod_source_toggle = Rect::new(
+        osc3_toggle.x,
+        osc3_toggle.y + toggle_size.y + 8.0,
+        toggle_size.x,
+        toggle_size.y,
+    );
+    let controller_extra_knobs = [
+        Rect::new(
+            controller_knobs[1].x,
+            mod_target_toggle.y + toggle_size.y + 28.0,
+            knob_size,
+            knob_size,
+        ),
+        Rect::new(
+            controller_knobs[2].x,
+            mod_source_toggle.y + toggle_size.y + 28.0,
+            knob_size,
+            knob_size,
+        ),
+    ];
+    let decay_switch = Rect::new(
+        controller_rect.x + 16.0,
+        controller_rect.y + controller_rect.h - 70.0,
+        90.0,
+        32.0,
+    );
+    let s_trigger_button = Rect::new(
+        controller_rect.x + controller_rect.w - 110.0,
+        controller_rect.y + controller_rect.h - 70.0,
+        90.0,
+        32.0,
     );
 
     let mut osc_range_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
@@ -385,8 +444,14 @@ fn compute_panel_layout() -> PanelLayout {
         output_rect,
         modifier_loudness_split: loudness_split,
         controller_knobs,
+        controller_extra_knobs,
         controller_mod_toggle: osc_mod_toggle,
         controller_osc3_toggle: osc3_toggle,
+        controller_glide_switch: glide_switch,
+        controller_decay_switch: decay_switch,
+        controller_s_trigger_button: s_trigger_button,
+        controller_mod_source_toggle: mod_source_toggle,
+        controller_mod_target_toggle: mod_target_toggle,
         osc_range_knobs,
         osc_freq_knobs,
         osc_wave_knobs,
@@ -417,6 +482,12 @@ struct PanelState {
     mod_signal: f32,
     osc_modulation: bool,
     osc3_control: bool,
+    mod_source_noise: bool,
+    mod_target_filter: bool,
+    glide_enabled: bool,
+    decay_enabled: bool,
+    filter_overload: bool,
+    s_trigger_request: bool,
     mod_noise_color: NoiseColor,
     mod_noise: NoiseGenerator,
 }
@@ -437,6 +508,12 @@ impl PanelState {
             mod_signal: 0.0,
             osc_modulation: false,
             osc3_control: true,
+            mod_source_noise: true,
+            mod_target_filter: true,
+            glide_enabled: true,
+            decay_enabled: true,
+            filter_overload: false,
+            s_trigger_request: false,
             mod_noise_color: NoiseColor::White,
             mod_noise: NoiseGenerator::new(),
         }
@@ -485,8 +562,12 @@ impl PanelState {
     fn cutoff_hz(&self) -> f32 {
         let base =
             FILTER_MIN_HZ + self.modifiers_panel.filter[0].value * (FILTER_MAX_HZ - FILTER_MIN_HZ);
-        let modulated = base * (1.0 + self.mod_signal * MOD_DEPTH);
-        modulated.clamp(FILTER_MIN_HZ, FILTER_MAX_HZ)
+        if self.mod_target_filter {
+            let modulated = base * (1.0 + self.mod_signal * MOD_DEPTH);
+            modulated.clamp(FILTER_MIN_HZ, FILTER_MAX_HZ)
+        } else {
+            base
+        }
     }
 
     fn master_level(&self) -> f32 {
@@ -511,7 +592,7 @@ impl PanelState {
     }
 
     fn apply_pitch(&mut self, dt: f32, _vcos: &[VcoHandle]) {
-        if dt <= 0.0 || self.glide_time() <= 0.0001 {
+        if !self.glide_enabled || dt <= 0.0 || self.glide_time() <= 0.0001 {
             self.pitch_current = self.pitch_target;
         } else {
             let glide = self.glide_time().max(0.0001);
@@ -521,11 +602,14 @@ impl PanelState {
     }
 
     fn update_modulation(&mut self, dt: f32) {
-        self.mod_phase = (self.mod_phase + dt * MOD_LFO_FREQ).fract();
+        let rate = self.mod_lfo_rate();
+        self.mod_phase = (self.mod_phase + dt * rate).fract();
         let sine = (self.mod_phase * std::f32::consts::TAU).sin();
         let noise = self.mod_noise.sample(self.mod_noise_color);
-        let mix = self.controllers.modulation_mix.value;
-        self.mod_signal = sine * (1.0 - mix) + noise * mix;
+        let blended = sine * (1.0 - self.controllers.modulation_mix.value)
+            + noise * self.controllers.modulation_mix.value;
+        let source = if self.mod_source_noise { blended } else { sine };
+        self.mod_signal = source * self.mod_amount();
     }
 
     fn modulation_pitch_offset(&self) -> f32 {
@@ -534,6 +618,84 @@ impl PanelState {
         } else {
             0.0
         }
+    }
+
+    fn mod_lfo_rate(&self) -> f32 {
+        LFO_RATE_MIN + self.controllers.modulation_rate.value * (LFO_RATE_MAX - LFO_RATE_MIN)
+    }
+
+    fn mod_amount(&self) -> f32 {
+        self.controllers.modulation_amount.value
+    }
+
+    fn filter_attack_time(&self) -> f32 {
+        knob_to_env_time(
+            self.modifiers_panel.filter_env[0].value,
+            FILTER_ATTACK_MIN,
+            FILTER_ATTACK_MAX,
+        )
+    }
+
+    fn filter_decay_time(&self) -> f32 {
+        knob_to_env_time(
+            self.modifiers_panel.filter_env[1].value,
+            FILTER_DECAY_MIN,
+            FILTER_DECAY_MAX,
+        )
+    }
+
+    fn filter_sustain_level(&self) -> f32 {
+        self.modifiers_panel.filter_env[2].value
+    }
+
+    fn filter_release_time(&self) -> f32 {
+        if self.decay_enabled {
+            self.filter_decay_time()
+        } else {
+            0.02
+        }
+    }
+
+    fn loud_attack_time(&self) -> f32 {
+        knob_to_env_time(
+            self.modifiers_panel.loudness_env[0].value,
+            LOUD_ATTACK_MIN,
+            LOUD_ATTACK_MAX,
+        )
+    }
+
+    fn loud_decay_time(&self) -> f32 {
+        knob_to_env_time(
+            self.modifiers_panel.loudness_env[1].value,
+            LOUD_DECAY_MIN,
+            LOUD_DECAY_MAX,
+        )
+    }
+
+    fn loud_sustain_level(&self) -> f32 {
+        self.modifiers_panel.loudness_env[2].value
+    }
+
+    fn loud_release_time(&self) -> f32 {
+        if self.decay_enabled {
+            self.loud_decay_time()
+        } else {
+            0.02
+        }
+    }
+
+    fn set_overload(&mut self, flag: bool) {
+        self.filter_overload = flag;
+    }
+
+    fn request_s_trigger(&mut self) {
+        self.s_trigger_request = true;
+    }
+
+    fn take_s_trigger(&mut self) -> bool {
+        let pending = self.s_trigger_request;
+        self.s_trigger_request = false;
+        pending
     }
 }
 
@@ -591,6 +753,8 @@ struct ControllerKnobs {
     tune: KnobValue,
     glide: KnobValue,
     modulation_mix: KnobValue,
+    modulation_rate: KnobValue,
+    modulation_amount: KnobValue,
 }
 
 impl ControllerKnobs {
@@ -599,6 +763,8 @@ impl ControllerKnobs {
             tune: KnobValue::implemented(0.5),
             glide: KnobValue::implemented(0.3),
             modulation_mix: KnobValue::implemented(0.5),
+            modulation_rate: KnobValue::implemented(0.5),
+            modulation_amount: KnobValue::implemented(0.6),
         }
     }
 }
@@ -706,6 +872,8 @@ enum KnobId {
     ControllersTune,
     ControllersGlide,
     ControllersModMix,
+    ControllersModRate,
+    ControllersModAmount,
     OscRange1,
     OscRange2,
     OscRange3,
@@ -796,6 +964,21 @@ fn handle_controller_switches(panel_state: &mut PanelState, layout: &PanelLayout
     }
     if layout.controller_osc3_toggle.contains(mouse) {
         panel_state.osc3_control = !panel_state.osc3_control;
+    }
+    if layout.controller_mod_source_toggle.contains(mouse) {
+        panel_state.mod_source_noise = !panel_state.mod_source_noise;
+    }
+    if layout.controller_mod_target_toggle.contains(mouse) {
+        panel_state.mod_target_filter = !panel_state.mod_target_filter;
+    }
+    if layout.controller_glide_switch.contains(mouse) {
+        panel_state.glide_enabled = !panel_state.glide_enabled;
+    }
+    if layout.controller_decay_switch.contains(mouse) {
+        panel_state.decay_enabled = !panel_state.decay_enabled;
+    }
+    if layout.controller_s_trigger_button.contains(mouse) {
+        panel_state.request_s_trigger();
     }
 }
 
@@ -892,6 +1075,24 @@ fn draw_controllers_panel(
         "MOD MIX",
         None,
     );
+    let mod_rate_label = format!("{:.1} Hz", panel_state.mod_lfo_rate());
+    draw_knob_widget(
+        knob_drag,
+        KnobId::ControllersModRate,
+        layout.controller_extra_knobs[0],
+        &mut panel_state.controllers.modulation_rate,
+        "MOD RATE",
+        Some(&mod_rate_label),
+    );
+    let mod_amt_label = format_percent(panel_state.mod_amount());
+    draw_knob_widget(
+        knob_drag,
+        KnobId::ControllersModAmount,
+        layout.controller_extra_knobs[1],
+        &mut panel_state.controllers.modulation_amount,
+        "MOD AMT",
+        Some(&mod_amt_label),
+    );
     draw_controller_info(panel_state, &layout.controller_rect);
 
     draw_text_ex(
@@ -925,6 +1126,79 @@ fn draw_controllers_panel(
         panel_state.osc3_control,
         "ON",
     );
+    draw_text_ex(
+        "GLIDE ON",
+        layout.controller_glide_switch.x,
+        layout.controller_glide_switch.y - 6.0,
+        TextParams {
+            font_size: 14,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+    draw_toggle_switch(
+        layout.controller_glide_switch,
+        panel_state.glide_enabled,
+        "ON",
+    );
+
+    draw_text_ex(
+        "MOD SOURCE",
+        layout.controller_mod_source_toggle.x,
+        layout.controller_mod_source_toggle.y - 6.0,
+        TextParams {
+            font_size: 12,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+    draw_toggle_switch(
+        layout.controller_mod_source_toggle,
+        panel_state.mod_source_noise,
+        if panel_state.mod_source_noise {
+            "NOISE"
+        } else {
+            "LFO"
+        },
+    );
+
+    draw_text_ex(
+        "OSC.3 / FILTER EG",
+        layout.controller_mod_target_toggle.x,
+        layout.controller_mod_target_toggle.y - 6.0,
+        TextParams {
+            font_size: 12,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+    draw_toggle_switch(
+        layout.controller_mod_target_toggle,
+        panel_state.mod_target_filter,
+        if panel_state.mod_target_filter {
+            "FILTER"
+        } else {
+            "OSC3"
+        },
+    );
+
+    draw_text_ex(
+        "DECAY",
+        layout.controller_decay_switch.x,
+        layout.controller_decay_switch.y - 6.0,
+        TextParams {
+            font_size: 14,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+    draw_toggle_switch(
+        layout.controller_decay_switch,
+        panel_state.decay_enabled,
+        "ON",
+    );
+
+    draw_button(layout.controller_s_trigger_button, "S-TRIG");
 }
 
 fn draw_controller_info(panel_state: &PanelState, rect: &Rect) {
@@ -1095,8 +1369,7 @@ fn draw_mixer(panel_state: &mut PanelState, knob_drag: &mut KnobDragState, layou
         layout.noise_selector_rect,
         panel_state.mixer_panel.noise_color,
     );
-    let overload_active = panel_state.oscillator_mix_levels().iter().sum::<f32>() > 2.5;
-    draw_overload_lamp(layout.overload_rect, overload_active);
+    draw_overload_lamp(layout.overload_rect, panel_state.filter_overload);
 }
 
 fn draw_knob_scale(rect: Rect) {
@@ -1153,6 +1426,18 @@ fn draw_toggle_switch(rect: Rect, on: bool, label: &str) {
             ..Default::default()
         },
     );
+}
+
+fn draw_button(rect: Rect, label: &str) {
+    draw_rectangle(
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        Color::new(0.08, 0.05, 0.03, 1.0),
+    );
+    draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
+    draw_centered_text(label, rect, 16);
 }
 
 fn draw_noise_selector(rect: Rect, selection: NoiseColor) {
@@ -1286,12 +1571,7 @@ fn draw_modifiers(
         None,
     );
 
-    let filter_attack = knob_to_env_time(
-        panel_state.modifiers_panel.filter_env[0].value,
-        FILTER_ATTACK_MIN,
-        FILTER_ATTACK_MAX,
-    );
-    let filter_attack_label = format_env_time(filter_attack);
+    let filter_attack_label = format_env_time(panel_state.filter_attack_time());
     draw_knob_widget(
         knob_drag,
         KnobId::FilterAttack,
@@ -1300,12 +1580,7 @@ fn draw_modifiers(
         "ATTACK TIME",
         Some(&filter_attack_label),
     );
-    let filter_decay = knob_to_env_time(
-        panel_state.modifiers_panel.filter_env[1].value,
-        FILTER_DECAY_MIN,
-        FILTER_DECAY_MAX,
-    );
-    let filter_decay_label = format_env_time(filter_decay);
+    let filter_decay_label = format_env_time(panel_state.filter_decay_time());
     draw_knob_widget(
         knob_drag,
         KnobId::FilterDecay,
@@ -1314,7 +1589,7 @@ fn draw_modifiers(
         "DECAY TIME",
         Some(&filter_decay_label),
     );
-    let filter_sustain_label = format_percent(panel_state.modifiers_panel.filter_env[2].value);
+    let filter_sustain_label = format_percent(panel_state.filter_sustain_level());
     draw_knob_widget(
         knob_drag,
         KnobId::FilterSustain,
@@ -1324,12 +1599,7 @@ fn draw_modifiers(
         Some(&filter_sustain_label),
     );
 
-    let loud_attack = knob_to_env_time(
-        panel_state.modifiers_panel.loudness_env[0].value,
-        LOUD_ATTACK_MIN,
-        LOUD_ATTACK_MAX,
-    );
-    let loud_attack_label = format_env_time(loud_attack);
+    let loud_attack_label = format_env_time(panel_state.loud_attack_time());
     draw_knob_widget(
         knob_drag,
         KnobId::LoudnessAttack,
@@ -1338,12 +1608,7 @@ fn draw_modifiers(
         "LOUD ATTACK",
         Some(&loud_attack_label),
     );
-    let loud_decay = knob_to_env_time(
-        panel_state.modifiers_panel.loudness_env[1].value,
-        LOUD_DECAY_MIN,
-        LOUD_DECAY_MAX,
-    );
-    let loud_decay_label = format_env_time(loud_decay);
+    let loud_decay_label = format_env_time(panel_state.loud_decay_time());
     draw_knob_widget(
         knob_drag,
         KnobId::LoudnessDecay,
@@ -1352,7 +1617,7 @@ fn draw_modifiers(
         "LOUD DECAY",
         Some(&loud_decay_label),
     );
-    let loud_sustain_label = format_percent(panel_state.modifiers_panel.loudness_env[2].value);
+    let loud_sustain_label = format_percent(panel_state.loud_sustain_level());
     draw_knob_widget(
         knob_drag,
         KnobId::LoudnessSustain,
@@ -1939,14 +2204,16 @@ fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline:
         synth.set_filter_emphasis(panel_state.modifiers_panel.filter[1].value);
         synth.set_filter_contour(panel_state.modifiers_panel.filter[2].value);
         synth.set_filter_envelope(
-            panel_state.modifiers_panel.filter_env[0].value,
-            panel_state.modifiers_panel.filter_env[1].value,
-            panel_state.modifiers_panel.filter_env[2].value,
+            panel_state.filter_attack_time(),
+            panel_state.filter_decay_time(),
+            panel_state.filter_sustain_level(),
+            panel_state.filter_release_time(),
         );
         synth.set_loudness_envelope(
-            panel_state.modifiers_panel.loudness_env[0].value,
-            panel_state.modifiers_panel.loudness_env[1].value,
-            panel_state.modifiers_panel.loudness_env[2].value,
+            panel_state.loud_attack_time(),
+            panel_state.loud_decay_time(),
+            panel_state.loud_sustain_level(),
+            panel_state.loud_release_time(),
         );
     }
 }
@@ -1954,9 +2221,6 @@ fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline:
 fn feed_stub_knobs(panel_state: &PanelState) {
     stub_external_input_volume(panel_state.mixer_panel.external_input.value);
     stub_mixer_external_toggle(panel_state.mixer_panel.ext_enabled);
-    stub_filter_attack(panel_state.modifiers_panel.filter_env[0].value);
-    stub_filter_decay(panel_state.modifiers_panel.filter_env[1].value);
-    stub_filter_sustain(panel_state.modifiers_panel.filter_env[2].value);
     stub_phones_volume(panel_state.output_panel.phones_volume.value);
 }
 
@@ -1966,18 +2230,6 @@ fn stub_external_input_volume(_value: f32) {
 
 fn stub_mixer_external_toggle(_on: bool) {
     // TODO: Implement external input enable switch.
-}
-
-fn stub_filter_attack(_value: f32) {
-    // TODO: Add filter envelope attack time handling.
-}
-
-fn stub_filter_decay(_value: f32) {
-    // TODO: Add filter envelope decay segment.
-}
-
-fn stub_filter_sustain(_value: f32) {
-    // TODO: Tie filter sustain knob into envelope sustain.
 }
 
 fn stub_phones_volume(_value: f32) {
