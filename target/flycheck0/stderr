@@ -1,9 +1,5 @@
     Blocking waiting for file lock on build directory
-   0.653865208s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint: fingerprint dirty for miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)/Check { test: false }/TargetInner { name: "miniroog-model-r", doc: true, ..: with_path("/Users/chedstrom/github/miniroog-model-r/src/main.rs", Edition2024) }
-   0.653884125s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
-   0.656590542s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint: fingerprint dirty for miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)/Check { test: true }/TargetInner { name: "miniroog-model-r", doc: true, ..: with_path("/Users/chedstrom/github/miniroog-model-r/src/main.rs", Edition2024) }
-   0.656597625s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   2.681192416s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint: fingerprint dirty for miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)/Check { test: true }/TargetInner { name: "miniroog-model-r", doc: true, ..: with_path("/Users/chedstrom/github/miniroog-model-r/src/main.rs", Edition2024) }
+   2.681208708s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
     Checking miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)
-error: could not compile `miniroog-model-r` (bin "miniroog-model-r") due to 2 previous errors; 1 warning emitted
-warning: build failed, waiting for other jobs to finish...
-error: could not compile `miniroog-model-r` (bin "miniroog-model-r" test) due to 2 previous errors; 1 warning emitted
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.85s

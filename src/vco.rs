@@ -2,7 +2,7 @@ use std::sync::{mpsc, Arc, Mutex};
 
 use tokio::runtime::Runtime;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Waveform {
     Saw,
     Pulse,
