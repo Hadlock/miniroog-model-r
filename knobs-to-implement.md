@@ -1,10 +1,5 @@
 # Knobs To Implement
 
-## Controllers
-- Tune – feed master pitch offset into all oscillators.
-- Glide – add portamento smoothing between note voltages.
-- Modulation Mix – blend oscillator/noise modulation bus sources.
-
 ## Oscillator Bank
 - Range – discrete oscillator range selector that re-tunes all voices.
 

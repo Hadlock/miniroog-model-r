@@ -8,7 +8,7 @@ mod vco;
 use std::sync::{Arc, Mutex};
 
 use controllers::KeyboardController;
-use macroquad::{prelude::*, text::measure_text};
+use macroquad::{prelude::*, rand::gen_range, text::measure_text};
 use modifiers::compute_spectrum;
 use oscillatorbank::OscillatorBank;
 use output::{AudioEngine, DebugData, SharedPipeline, SynthPipeline};
@@ -22,6 +22,11 @@ const KEY_FONT_SIZE: u16 = 35;
 const MAX_ANALYZER_FREQ: f32 = 25_000.0;
 const MIN_ANALYZER_DB: f32 = -20.0;
 const MAX_ANALYZER_DB: f32 = 20.0;
+const TUNE_RANGE_OCT: f32 = 1.0;
+const GLIDE_MIN_SEC: f32 = 0.0;
+const GLIDE_MAX_SEC: f32 = 0.6;
+const MOD_LFO_FREQ: f32 = 4.5;
+const MOD_DEPTH: f32 = 0.3;
 
 const AMBER: Color = Color {
     r: 0.98,
@@ -70,6 +75,8 @@ async fn main() {
     let mut knob_drag = KnobDragState::default();
     let mut debug_window = DebugWindowState::new();
     sync_audio_from_panel(&panel_state, &vcos, &pipeline);
+    panel_state.refresh_pitch_target();
+    panel_state.apply_pitch(0.0, &vcos);
 
     let panel_texture = load_texture("assets/synth-ui-style.png")
         .await
@@ -84,6 +91,7 @@ async fn main() {
     }
 
     loop {
+        let dt = get_frame_time();
         let layout = compute_panel_layout();
         let keyboard_layout = build_keyboard_layout(&controller);
         let mouse_pos = mouse_position_vec();
@@ -96,9 +104,6 @@ async fn main() {
         if let Some(message) = controller.poll(mouse_changed) {
             panel_state.last_midi = message.midi_note;
             panel_state.last_voltage = message.voltage;
-            for (_, tx) in vcos.iter() {
-                let _ = tx.send(VcoCommand::SetVoltage(message.voltage));
-            }
             if let Ok(mut synth) = pipeline.lock() {
                 synth.set_gate(message.gate);
             }
@@ -106,6 +111,9 @@ async fn main() {
 
         handle_debug_toggle(&mut debug_window, mouse_pos);
         handle_mixer_switches(&mut panel_state, &layout);
+        panel_state.refresh_pitch_target();
+        panel_state.update_modulation(dt);
+        panel_state.apply_pitch(dt, &vcos);
 
         {
             let snapshot = {
@@ -204,13 +212,13 @@ fn compute_panel_layout() -> PanelLayout {
             knob_size,
         ),
         Rect::new(
-            controller_rect.x + controller_rect.w * 0.5 - knob_size * 0.5,
-            controller_rect.y + 120.0,
+            controller_rect.x + 20.0,
+            controller_rect.y + controller_rect.h - knob_size - 20.0,
             knob_size,
             knob_size,
         ),
         Rect::new(
-            controller_rect.x + controller_rect.w * 0.5 - knob_size * 0.5,
+            controller_rect.x + controller_rect.w - knob_size - 20.0,
             controller_rect.y + controller_rect.h - knob_size - 20.0,
             knob_size,
             knob_size,
@@ -342,6 +350,10 @@ struct PanelState {
     output_panel: OutputKnobs,
     last_midi: i32,
     last_voltage: f32,
+    pitch_target: f32,
+    pitch_current: f32,
+    mod_phase: f32,
+    mod_signal: f32,
 }
 
 impl PanelState {
@@ -354,6 +366,10 @@ impl PanelState {
             output_panel: OutputKnobs::new(),
             last_midi: -1,
             last_voltage: 0.0,
+             pitch_target: 0.0,
+             pitch_current: 0.0,
+             mod_phase: 0.0,
+             mod_signal: 0.0,
         }
     }
 
@@ -378,8 +394,10 @@ impl PanelState {
     }
 
     fn cutoff_hz(&self) -> f32 {
-        FILTER_MIN_HZ
-            + self.modifiers_panel.filter[0].value * (FILTER_MAX_HZ - FILTER_MIN_HZ)
+        let base = FILTER_MIN_HZ
+            + self.modifiers_panel.filter[0].value * (FILTER_MAX_HZ - FILTER_MIN_HZ);
+        let modulated = base * (1.0 + self.mod_signal * MOD_DEPTH);
+        modulated.clamp(FILTER_MIN_HZ, FILTER_MAX_HZ)
     }
 
     fn master_level(&self) -> f32 {
@@ -389,6 +407,42 @@ impl PanelState {
     fn osc_detune(&self, index: usize) -> f32 {
         let value = self.oscillator.freq[index].value;
         (value * 2.0 - 1.0) * DETUNE_RANGE
+    }
+
+    fn tune_offset(&self) -> f32 {
+        (self.controllers.tune.value - 0.5) * TUNE_RANGE_OCT
+    }
+
+    fn refresh_pitch_target(&mut self) {
+        self.pitch_target = self.last_voltage + self.tune_offset();
+    }
+
+    fn glide_time(&self) -> f32 {
+        GLIDE_MIN_SEC + self.controllers.glide.value * (GLIDE_MAX_SEC - GLIDE_MIN_SEC)
+    }
+
+    fn apply_pitch(&mut self, dt: f32, vcos: &[VcoHandle]) {
+        let previous = self.pitch_current;
+        if dt <= 0.0 || self.glide_time() <= 0.0001 {
+            self.pitch_current = self.pitch_target;
+        } else {
+            let glide = self.glide_time().max(0.0001);
+            let step = (dt / glide).clamp(0.0, 1.0);
+            self.pitch_current += (self.pitch_target - self.pitch_current) * step;
+        }
+        if (self.pitch_current - previous).abs() > 0.0001 {
+            for (_, tx) in vcos.iter() {
+                let _ = tx.send(VcoCommand::SetVoltage(self.pitch_current));
+            }
+        }
+    }
+
+    fn update_modulation(&mut self, dt: f32) {
+        self.mod_phase = (self.mod_phase + dt * MOD_LFO_FREQ).fract();
+        let sine = (self.mod_phase * std::f32::consts::TAU).sin();
+        let noise = gen_range(-1.0, 1.0);
+        let mix = self.controllers.modulation_mix.value;
+        self.mod_signal = sine * (1.0 - mix) + noise * mix;
     }
 }
 
@@ -1556,9 +1610,6 @@ fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline:
 }
 
 fn feed_stub_knobs(panel_state: &PanelState) {
-    stub_controllers_tune(panel_state.controllers.tune.value);
-    stub_controllers_glide(panel_state.controllers.glide.value);
-    stub_controllers_mod_mix(panel_state.controllers.modulation_mix.value);
     for rage in &panel_state.oscillator.range {
         stub_oscillator_range(rage.value);
     }
@@ -1579,18 +1630,6 @@ fn feed_stub_knobs(panel_state: &PanelState) {
     stub_loudness_decay(panel_state.modifiers_panel.loudness_env[1].value);
     stub_loudness_sustain(panel_state.modifiers_panel.loudness_env[2].value);
     stub_phones_volume(panel_state.output_panel.phones_volume.value);
-}
-
-fn stub_controllers_tune(_value: f32) {
-    // TODO: Map controller tune knob into base pitch offset.
-}
-
-fn stub_controllers_glide(_value: f32) {
-    // TODO: Implement glide/portamento smoothing for pitch CV.
-}
-
-fn stub_controllers_mod_mix(_value: f32) {
-    // TODO: Blend modulation bus and noise when modulation mix knob is ready.
 }
 
 fn stub_oscillator_range(_value: f32) {
