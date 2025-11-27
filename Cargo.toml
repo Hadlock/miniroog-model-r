@@ -1,0 +1,11 @@
+[package]
+name = "miniroog-model-r"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+macroquad = { version = "0.4", features = ["audio"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+cpal = "0.15"
+rustfft = "6"
+anyhow = "1"
