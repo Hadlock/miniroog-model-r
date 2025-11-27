@@ -37,3 +37,7 @@ flight_path*.png
 ehthumbs.db
 Thumbs.db
 .rustc_info.json
+
+target/
+**/flycheck*
+**/.rustc_info.json

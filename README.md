@@ -1,5 +1,7 @@
 # MiniRoog Model R
 
+![systemr logo](https://github.com/hadlock/systemr/blob/main/static/systemr-logo.png)
+
 ![MiniRoog screenshot](static/screenshot.png)
 
 MiniRoog Model R is a Macroquad + CPAL homage to the classic MiniMoog Model D.
