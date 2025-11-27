@@ -105,6 +105,7 @@ async fn main() {
         }
 
         handle_debug_toggle(&mut debug_window, mouse_pos);
+        handle_mixer_switches(&mut panel_state, &layout);
 
         {
             let snapshot = {
@@ -160,7 +161,11 @@ struct PanelLayout {
     osc_range_knobs: [Rect; 3],
     osc_freq_knobs: [Rect; 3],
     osc_wave_knobs: [Rect; 3],
-    mixer_knobs: [Rect; 5],
+    mixer_osc_knobs: [Rect; 3],
+    mixer_extra_knobs: [Rect; 2],
+    mixer_toggle_rects: [Rect; 5],
+    noise_selector_rects: [Rect; 2],
+    overload_rect: Rect,
     filter_knobs: [Rect; 3],
     filter_env_knobs: [Rect; 3],
     loudness_knobs: [Rect; 3],
@@ -230,16 +235,50 @@ fn compute_panel_layout() -> PanelLayout {
         );
     }
 
-    let mut mixer_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 5];
-    let mix_spacing = (mixer_rect.w - knob_size * 5.0) / 4.0;
-    for index in 0..5 {
-        mixer_knobs[index] = Rect::new(
-            mixer_rect.x + index as f32 * (knob_size + mix_spacing),
-            mixer_rect.y + mixer_rect.h * 0.5 - knob_size * 0.5,
-            knob_size,
-            knob_size,
+    let mut mixer_osc_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
+    let mut mixer_extra_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 2];
+    let mut mixer_toggle_rects = [Rect::new(0.0, 0.0, 0.0, 0.0); 5];
+    let mut noise_selector_rects = [Rect::new(0.0, 0.0, 0.0, 0.0); 2];
+    let row_spacing = knob_size + 25.0;
+    let osc_x = mixer_rect.x + 20.0;
+    let extra_x = mixer_rect.x + mixer_rect.w * 0.55;
+    let toggle_size = vec2(30.0, 20.0);
+    for index in 0..3 {
+        let y = mixer_rect.y + 20.0 + index as f32 * row_spacing;
+        mixer_osc_knobs[index] = Rect::new(osc_x, y, knob_size, knob_size);
+        mixer_toggle_rects[index] = Rect::new(
+            osc_x + knob_size + 14.0,
+            y + knob_size * 0.5 - toggle_size.y * 0.5,
+            toggle_size.x,
+            toggle_size.y,
         );
     }
+    for index in 0..2 {
+        let y = mixer_rect.y + 20.0 + index as f32 * row_spacing;
+        mixer_extra_knobs[index] = Rect::new(extra_x, y, knob_size, knob_size);
+        let toggle_index = 3 + index;
+        mixer_toggle_rects[toggle_index] = Rect::new(
+            extra_x + knob_size + 14.0,
+            y + knob_size * 0.5 - toggle_size.y * 0.5,
+            toggle_size.x,
+            toggle_size.y,
+        );
+    }
+    let noise_selector_base = mixer_extra_knobs[1].y + knob_size * 0.5 - 12.0;
+    for index in 0..2 {
+        noise_selector_rects[index] = Rect::new(
+            mixer_toggle_rects[4].x + mixer_toggle_rects[4].w + 12.0 + index as f32 * (48.0 + 8.0),
+            noise_selector_base,
+            48.0,
+            24.0,
+        );
+    }
+    let overload_rect = Rect::new(
+        mixer_extra_knobs[0].x + knob_size * 0.5 - 12.0,
+        mixer_rect.y + 2.0,
+        24.0,
+        24.0,
+    );
 
     let mut filter_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut filter_env_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
@@ -282,7 +321,11 @@ fn compute_panel_layout() -> PanelLayout {
         osc_range_knobs,
         osc_freq_knobs,
         osc_wave_knobs,
-        mixer_knobs,
+        mixer_osc_knobs,
+        mixer_extra_knobs,
+        mixer_toggle_rects,
+        noise_selector_rects,
+        overload_rect,
         filter_knobs,
         filter_env_knobs,
         loudness_knobs,
@@ -316,9 +359,21 @@ impl PanelState {
 
     fn oscillator_mix_levels(&self) -> [f32; 3] {
         [
-            self.mixer_panel.osc[0].value,
-            self.mixer_panel.osc[1].value,
-            self.mixer_panel.osc[2].value,
+            if self.mixer_panel.osc_enabled[0] {
+                self.mixer_panel.osc[0].value
+            } else {
+                0.0
+            },
+            if self.mixer_panel.osc_enabled[1] {
+                self.mixer_panel.osc[1].value
+            } else {
+                0.0
+            },
+            if self.mixer_panel.osc_enabled[2] {
+                self.mixer_panel.osc[2].value
+            } else {
+                0.0
+            },
         ]
     }
 
@@ -428,11 +483,21 @@ impl OscillatorKnobs {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NoiseColor {
+    White,
+    Pink,
+}
+
 #[derive(Clone)]
 struct MixerKnobs {
     external_input: KnobValue,
     osc: [KnobValue; 3],
     noise: KnobValue,
+    osc_enabled: [bool; 3],
+    ext_enabled: bool,
+    noise_enabled: bool,
+    noise_color: NoiseColor,
 }
 
 impl MixerKnobs {
@@ -445,6 +510,10 @@ impl MixerKnobs {
                 KnobValue::implemented(0.55),
             ],
             noise: KnobValue::stub(0.0),
+            osc_enabled: [true; 3],
+            ext_enabled: true,
+            noise_enabled: true,
+            noise_color: NoiseColor::White,
         }
     }
 }
@@ -548,6 +617,39 @@ fn handle_debug_toggle(state: &mut DebugWindowState, mouse: Vec2) {
         }
     } else if button_rect.contains(mouse) && is_mouse_button_pressed(MouseButton::Left) {
         state.open = true;
+    }
+}
+
+fn handle_mixer_switches(panel_state: &mut PanelState, layout: &PanelLayout) {
+    if !is_mouse_button_pressed(MouseButton::Left) {
+        return;
+    }
+    let mouse = mouse_position_vec();
+    for (index, rect) in layout.mixer_toggle_rects.iter().enumerate() {
+        if rect.contains(mouse) {
+            match index {
+                0..=2 => {
+                    let flag = &mut panel_state.mixer_panel.osc_enabled[index];
+                    *flag = !*flag;
+                }
+                3 => {
+                    panel_state.mixer_panel.ext_enabled = !panel_state.mixer_panel.ext_enabled;
+                }
+                4 => {
+                    panel_state.mixer_panel.noise_enabled = !panel_state.mixer_panel.noise_enabled;
+                }
+                _ => {}
+            }
+        }
+    }
+    for (index, rect) in layout.noise_selector_rects.iter().enumerate() {
+        if rect.contains(mouse) {
+            panel_state.mixer_panel.noise_color = if index == 0 {
+                NoiseColor::White
+            } else {
+                NoiseColor::Pink
+            };
+        }
     }
 }
 
@@ -738,50 +840,190 @@ fn draw_mixer(
     knob_drag: &mut KnobDragState,
     layout: &PanelLayout,
 ) {
-    let external = format!("{:.0}%", panel_state.mixer_panel.external_input.value * 100.0);
-    draw_knob_widget(
-        knob_drag,
-        KnobId::MixerExternal,
-        layout.mixer_knobs[0],
+    draw_text_ex(
+        "VOLUME",
+        layout.mixer_rect.x + 10.0,
+        layout.mixer_rect.y + 16.0,
+        TextParams {
+            font_size: 18,
+            color: AMBER,
+            ..Default::default()
+        },
+    );
+    let osc_labels = ["OSC 1", "OSC 2", "OSC 3"];
+    for index in 0..3 {
+        let value_text = format!("{:.1}", panel_state.mixer_panel.osc[index].value * 10.0);
+        draw_knob_widget(
+            knob_drag,
+            match index {
+                0 => KnobId::MixerOsc1,
+                1 => KnobId::MixerOsc2,
+                _ => KnobId::MixerOsc3,
+            },
+            layout.mixer_osc_knobs[index],
+            &mut panel_state.mixer_panel.osc[index],
+            osc_labels[index],
+            Some(&format!("{value_text}/10")),
+        );
+        draw_knob_scale(layout.mixer_osc_knobs[index]);
+        draw_toggle_switch(
+            layout.mixer_toggle_rects[index],
+            panel_state.mixer_panel.osc_enabled[index],
+            "ON",
+        );
+    }
+    let extra_labels = ["EXT INPUT", "NOISE"];
+    let mut extra_knobs = [
         &mut panel_state.mixer_panel.external_input,
-        "EXT INPUT",
-        Some(&external),
-    );
-    let osc1 = format!("{:.0}%", panel_state.mixer_panel.osc[0].value * 100.0);
-    draw_knob_widget(
-        knob_drag,
-        KnobId::MixerOsc1,
-        layout.mixer_knobs[1],
-        &mut panel_state.mixer_panel.osc[0],
-        "OSC 1",
-        Some(&osc1),
-    );
-    let osc2 = format!("{:.0}%", panel_state.mixer_panel.osc[1].value * 100.0);
-    draw_knob_widget(
-        knob_drag,
-        KnobId::MixerOsc2,
-        layout.mixer_knobs[2],
-        &mut panel_state.mixer_panel.osc[1],
-        "OSC 2",
-        Some(&osc2),
-    );
-    let osc3 = format!("{:.0}%", panel_state.mixer_panel.osc[2].value * 100.0);
-    draw_knob_widget(
-        knob_drag,
-        KnobId::MixerOsc3,
-        layout.mixer_knobs[3],
-        &mut panel_state.mixer_panel.osc[2],
-        "OSC 3",
-        Some(&osc3),
-    );
-    let noise = format!("{:.0}%", panel_state.mixer_panel.noise.value * 100.0);
-    draw_knob_widget(
-        knob_drag,
-        KnobId::MixerNoise,
-        layout.mixer_knobs[4],
         &mut panel_state.mixer_panel.noise,
-        "NOISE",
-        Some(&noise),
+    ];
+    for index in 0..2 {
+        let knob = &mut extra_knobs[index];
+        let label = extra_labels[index];
+        draw_knob_widget(
+            knob_drag,
+            if index == 0 {
+                KnobId::MixerExternal
+            } else {
+                KnobId::MixerNoise
+            },
+            layout.mixer_extra_knobs[index],
+            knob,
+            label,
+            Some(&format!("{:.1}/10", knob.value * 10.0)),
+        );
+        draw_knob_scale(layout.mixer_extra_knobs[index]);
+        let toggle_index = 3 + index;
+        let enabled = if index == 0 {
+            panel_state.mixer_panel.ext_enabled
+        } else {
+            panel_state.mixer_panel.noise_enabled
+        };
+        draw_toggle_switch(layout.mixer_toggle_rects[toggle_index], enabled, "ON");
+    }
+    draw_noise_selector(
+        &layout.noise_selector_rects,
+        panel_state.mixer_panel.noise_color,
+    );
+    let overload_active = panel_state
+        .oscillator_mix_levels()
+        .iter()
+        .sum::<f32>()
+        > 2.5;
+    draw_overload_lamp(layout.overload_rect, overload_active);
+}
+
+fn draw_knob_scale(rect: Rect) {
+    draw_text_ex(
+        "10",
+        rect.x + rect.w + 8.0,
+        rect.y + 14.0,
+        TextParams {
+            font_size: 12,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+    draw_text_ex(
+        "0",
+        rect.x + rect.w + 14.0,
+        rect.y + rect.h - 4.0,
+        TextParams {
+            font_size: 12,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+}
+
+fn draw_toggle_switch(rect: Rect, on: bool, label: &str) {
+    let color = if on {
+        AMBER
+    } else {
+        Color::new(0.1, 0.08, 0.05, 1.0)
+    };
+    draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.02, 0.02, 0.02, 1.0));
+    draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
+    draw_rectangle(
+        rect.x + 2.0,
+        rect.y + 2.0,
+        rect.w - 4.0,
+        rect.h - 4.0,
+        color,
+    );
+    draw_text_ex(
+        label,
+        rect.x + 4.0,
+        rect.y + rect.h - 4.0,
+        TextParams {
+            font_size: 12,
+            color: BACKGROUND,
+            ..Default::default()
+        },
+    );
+}
+
+fn draw_noise_selector(rects: &[Rect; 2], selection: NoiseColor) {
+    let labels = ["WHITE", "PINK"];
+    for (index, rect) in rects.iter().enumerate() {
+        let active = match selection {
+            NoiseColor::White => index == 0,
+            NoiseColor::Pink => index == 1,
+        };
+        let fill = if active {
+            AMBER
+        } else {
+            Color::new(0.08, 0.05, 0.03, 1.0)
+        };
+        draw_rectangle(rect.x, rect.y, rect.w, rect.h, fill);
+        draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
+        draw_text_ex(
+            labels[index],
+            rect.x + 4.0,
+            rect.y + rect.h - 6.0,
+            TextParams {
+                font_size: 12,
+                color: if active { BACKGROUND } else { AMBER },
+                ..Default::default()
+            },
+        );
+    }
+
+    draw_text_ex(
+        "NOISE COLOR",
+        rects[0].x,
+        rects[0].y - 6.0,
+        TextParams {
+            font_size: 12,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+}
+
+fn draw_overload_lamp(rect: Rect, active: bool) {
+    let color = if active {
+        AMBER
+    } else {
+        Color::new(0.1, 0.08, 0.05, 1.0)
+    };
+    draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.02, 0.02, 0.02, 1.0));
+    draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
+    draw_circle(
+        rect.x + rect.w * 0.5,
+        rect.y + rect.h * 0.5,
+        rect.w.min(rect.h) * 0.3,
+        color,
+    );
+    draw_text_ex(
+        "OVERLOAD",
+        rect.x - 10.0,
+        rect.y - 4.0,
+        TextParams {
+            font_size: 12,
+            color: AMBER,
+            ..Default::default()
+        },
     );
 }
 
@@ -1322,6 +1564,12 @@ fn feed_stub_knobs(panel_state: &PanelState) {
     }
     stub_external_input_volume(panel_state.mixer_panel.external_input.value);
     stub_noise_volume(panel_state.mixer_panel.noise.value);
+    for enabled in &panel_state.mixer_panel.osc_enabled {
+        stub_mixer_oscillator_toggle(*enabled);
+    }
+    stub_mixer_external_toggle(panel_state.mixer_panel.ext_enabled);
+    stub_mixer_noise_toggle(panel_state.mixer_panel.noise_enabled);
+    stub_noise_color(panel_state.mixer_panel.noise_color);
     stub_filter_emphasis(panel_state.modifiers_panel.filter[1].value);
     stub_filter_contour_amount(panel_state.modifiers_panel.filter[2].value);
     stub_filter_attack(panel_state.modifiers_panel.filter_env[0].value);
@@ -1355,6 +1603,22 @@ fn stub_external_input_volume(_value: f32) {
 
 fn stub_noise_volume(_value: f32) {
     // TODO: Route noise generator into the mixer.
+}
+
+fn stub_mixer_oscillator_toggle(_on: bool) {
+    // TODO: Implement per-oscillator mixer enable.
+}
+
+fn stub_mixer_external_toggle(_on: bool) {
+    // TODO: Implement external input enable switch.
+}
+
+fn stub_mixer_noise_toggle(_on: bool) {
+    // TODO: Implement noise enable switch.
+}
+
+fn stub_noise_color(_color: NoiseColor) {
+    // TODO: Switch noise generator color between white/pink.
 }
 
 fn stub_filter_emphasis(_value: f32) {
