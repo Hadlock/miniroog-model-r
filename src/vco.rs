@@ -4,36 +4,44 @@ use tokio::runtime::Runtime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Waveform {
+    TriangleSaw,
     Saw,
-    Pulse,
-    Triangle,
-    Sine,
+    ReverseSaw,
+    PulseSquare,
+    PulseWide,
+    PulseNarrow,
 }
 
 impl Waveform {
     pub fn label(&self) -> &'static str {
         match self {
+            Waveform::TriangleSaw => "TRI/SAW",
             Waveform::Saw => "SAW",
-            Waveform::Pulse => "PULSE",
-            Waveform::Triangle => "TRI",
-            Waveform::Sine => "SINE",
+            Waveform::ReverseSaw => "REV SAW",
+            Waveform::PulseSquare => "PULSE 1",
+            Waveform::PulseWide => "PULSE 2",
+            Waveform::PulseNarrow => "PULSE 3",
         }
     }
 
     pub fn sample(&self, phase: f32) -> f32 {
         match self {
-            Waveform::Saw => 2.0 * (phase - 0.5),
-            Waveform::Pulse => {
-                if phase < 0.5 {
-                    1.0
-                } else {
-                    -1.0
-                }
+            Waveform::TriangleSaw => {
+                let tri = 4.0 * (phase - 0.5).abs() - 1.0;
+                let saw = 2.0 * (phase - 0.5);
+                (tri * 0.6 + saw * 0.4).clamp(-1.0, 1.0)
             }
-            Waveform::Triangle => 4.0 * (phase - 0.5).abs() - 1.0,
-            Waveform::Sine => (phase * std::f32::consts::TAU).sin(),
+            Waveform::Saw => 2.0 * (phase - 0.5),
+            Waveform::ReverseSaw => 1.0 - 2.0 * phase,
+            Waveform::PulseSquare => pulse_wave(phase, 0.5),
+            Waveform::PulseWide => pulse_wave(phase, 0.68),
+            Waveform::PulseNarrow => pulse_wave(phase, 0.3),
         }
     }
+}
+
+fn pulse_wave(phase: f32, duty: f32) -> f32 {
+    if phase < duty { 1.0 } else { -1.0 }
 }
 
 #[derive(Debug)]

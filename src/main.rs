@@ -61,11 +61,13 @@ const LOUD_ATTACK_MIN: f32 = 0.001;
 const LOUD_ATTACK_MAX: f32 = 4.5;
 const LOUD_DECAY_MIN: f32 = 0.01;
 const LOUD_DECAY_MAX: f32 = 6.0;
-const WAVEFORMS: [Waveform; 4] = [
+const WAVEFORMS: [Waveform; 6] = [
+    Waveform::TriangleSaw,
     Waveform::Saw,
-    Waveform::Pulse,
-    Waveform::Triangle,
-    Waveform::Sine,
+    Waveform::ReverseSaw,
+    Waveform::PulseSquare,
+    Waveform::PulseWide,
+    Waveform::PulseNarrow,
 ];
 const OSC_RANGE_MIN: f32 = -2.0;
 const OSC_RANGE_MAX: f32 = 3.0;
@@ -618,9 +620,9 @@ impl OscillatorKnobs {
                 KnobValue::implemented(detune_to_value(-0.02)),
             ],
             waveform: [
-                KnobValue::implemented(waveform_to_value(Waveform::Saw)),
-                KnobValue::implemented(waveform_to_value(Waveform::Saw)),
-                KnobValue::implemented(waveform_to_value(Waveform::Saw)),
+                KnobValue::implemented(waveform_to_value(Waveform::TriangleSaw)),
+                KnobValue::implemented(waveform_to_value(Waveform::TriangleSaw)),
+                KnobValue::implemented(waveform_to_value(Waveform::TriangleSaw)),
             ],
         }
     }
