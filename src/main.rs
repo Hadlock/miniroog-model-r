@@ -147,6 +147,7 @@ struct PanelLayout {
     mixer_rect: Rect,
     modifier_rect: Rect,
     output_rect: Rect,
+    modifier_loudness_split: f32,
     controller_knobs: [Rect; 3],
     osc_range_knob: Rect,
     osc_freq_knobs: [Rect; 3],
@@ -162,61 +163,54 @@ fn compute_panel_layout() -> PanelLayout {
     let margin = 36.0;
     let gap = 18.0;
     let usable_width = SCREEN_WIDTH - margin * 2.0 - gap * 4.0;
-    let section_width = usable_width / 5.0;
     let section_height = PANEL_HEIGHT - 80.0;
     let top = 40.0;
     let knob_size = 70.0;
 
-    let controller_rect = Rect::new(margin, top, section_width, section_height);
+    let width_factors = [0.14, 0.27, 0.22, 0.27, 0.1];
+    let mut sections = [0.0; 5];
+    for (i, factor) in width_factors.iter().enumerate() {
+        sections[i] = usable_width * factor;
+    }
+
+    let controller_rect = Rect::new(margin, top, sections[0], section_height);
     let oscillator_rect =
-        Rect::new(controller_rect.x + section_width + gap, top, section_width, section_height);
-    let mixer_rect = Rect::new(
-        oscillator_rect.x + section_width + gap,
-        top,
-        section_width,
-        section_height,
-    );
-    let modifier_rect = Rect::new(
-        mixer_rect.x + section_width + gap,
-        top,
-        section_width,
-        section_height,
-    );
-    let output_rect = Rect::new(
-        modifier_rect.x + section_width + gap,
-        top,
-        section_width,
-        section_height,
-    );
+        Rect::new(controller_rect.x + controller_rect.w + gap, top, sections[1], section_height);
+    let mixer_rect =
+        Rect::new(oscillator_rect.x + oscillator_rect.w + gap, top, sections[2], section_height);
+    let modifier_rect =
+        Rect::new(mixer_rect.x + mixer_rect.w + gap, top, sections[3], section_height);
+    let output_rect =
+        Rect::new(modifier_rect.x + modifier_rect.w + gap, top, sections[4], section_height);
 
     let controller_knobs = [
         Rect::new(
-            controller_rect.x + 20.0,
-            controller_rect.y + 40.0,
-            knob_size,
-            knob_size,
-        ),
-        Rect::new(
-            controller_rect.x + controller_rect.w - knob_size - 20.0,
-            controller_rect.y + 40.0,
+            controller_rect.x + controller_rect.w * 0.5 - knob_size * 0.5,
+            controller_rect.y + 20.0,
             knob_size,
             knob_size,
         ),
         Rect::new(
             controller_rect.x + controller_rect.w * 0.5 - knob_size * 0.5,
-            controller_rect.y + controller_rect.h - knob_size - 30.0,
+            controller_rect.y + 120.0,
+            knob_size,
+            knob_size,
+        ),
+        Rect::new(
+            controller_rect.x + controller_rect.w * 0.5 - knob_size * 0.5,
+            controller_rect.y + controller_rect.h - knob_size - 20.0,
             knob_size,
             knob_size,
         ),
     ];
 
     let osc_range_knob =
-        Rect::new(oscillator_rect.x + 20.0, oscillator_rect.y + 20.0, knob_size, knob_size);
+        Rect::new(oscillator_rect.x + oscillator_rect.w * 0.5 - knob_size * 0.5, oscillator_rect.y + 10.0, knob_size, knob_size);
 
     let mut osc_freq_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut osc_wave_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     for index in 0..3 {
-        let y = oscillator_rect.y + 120.0 + index as f32 * 90.0;
+        let y = oscillator_rect.y + 110.0 + index as f32 * 95.0;
         osc_freq_knobs[index] = Rect::new(oscillator_rect.x + 20.0, y, knob_size, knob_size);
         osc_wave_knobs[index] = Rect::new(
             oscillator_rect.x + oscillator_rect.w - knob_size - 20.0,
@@ -227,11 +221,11 @@ fn compute_panel_layout() -> PanelLayout {
     }
 
     let mut mixer_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 5];
+    let mix_spacing = (mixer_rect.w - knob_size * 5.0) / 4.0;
     for index in 0..5 {
-        let y = mixer_rect.y + 30.0 + index as f32 * 60.0;
         mixer_knobs[index] = Rect::new(
-            mixer_rect.x + mixer_rect.w * 0.5 - knob_size * 0.5,
-            y,
+            mixer_rect.x + index as f32 * (knob_size + mix_spacing),
+            mixer_rect.y + mixer_rect.h * 0.5 - knob_size * 0.5,
             knob_size,
             knob_size,
         );
@@ -240,20 +234,28 @@ fn compute_panel_layout() -> PanelLayout {
     let mut filter_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut filter_env_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut loudness_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
+    let column_spacing = (modifier_rect.w - knob_size * 3.0) / 2.0;
     for index in 0..3 {
-        let x = modifier_rect.x + 20.0 + index as f32 * (knob_size + 18.0);
+        let x = modifier_rect.x + index as f32 * (knob_size + column_spacing);
         filter_knobs[index] = Rect::new(x, modifier_rect.y + 20.0, knob_size, knob_size);
-        filter_env_knobs[index] =
-            Rect::new(x, modifier_rect.y + 120.0, knob_size, knob_size);
-        loudness_knobs[index] =
-            Rect::new(x, modifier_rect.y + 220.0, knob_size, knob_size);
+        filter_env_knobs[index] = Rect::new(x, modifier_rect.y + 120.0, knob_size, knob_size);
+    }
+    let loudness_split = modifier_rect.y + modifier_rect.h * 0.58;
+    for index in 0..3 {
+        let x = modifier_rect.x + index as f32 * (knob_size + column_spacing);
+        loudness_knobs[index] = Rect::new(x, loudness_split + 30.0, knob_size, knob_size);
     }
 
     let output_knobs = [
-        Rect::new(output_rect.x + output_rect.w * 0.5 - knob_size * 0.5, output_rect.y + 40.0, knob_size, knob_size),
         Rect::new(
             output_rect.x + output_rect.w * 0.5 - knob_size * 0.5,
-            output_rect.y + 180.0,
+            output_rect.y + 60.0,
+            knob_size,
+            knob_size,
+        ),
+        Rect::new(
+            output_rect.x + output_rect.w * 0.5 - knob_size * 0.5,
+            output_rect.y + output_rect.h - knob_size - 40.0,
             knob_size,
             knob_size,
         ),
@@ -265,6 +267,7 @@ fn compute_panel_layout() -> PanelLayout {
         mixer_rect,
         modifier_rect,
         output_rect,
+        modifier_loudness_split: loudness_split,
         controller_knobs,
         osc_range_knob,
         osc_freq_knobs,
@@ -769,6 +772,15 @@ fn draw_modifiers(
     knob_drag: &mut KnobDragState,
     layout: &PanelLayout,
 ) {
+    let line_y = layout.modifier_loudness_split + 10.0;
+    draw_line(
+        layout.modifier_rect.x + 8.0,
+        line_y,
+        layout.modifier_rect.x + layout.modifier_rect.w - 8.0,
+        line_y,
+        1.0,
+        AMBER_DIM,
+    );
     let cutoff_text = format!("{:.0} Hz", panel_state.cutoff_hz());
     draw_knob_widget(
         knob_drag,

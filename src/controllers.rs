@@ -2,6 +2,9 @@ use std::collections::HashMap;
 
 use macroquad::prelude::*;
 
+const MIDI_MIN: i32 = 21;
+const MIDI_MAX: i32 = 108;
+
 #[derive(Clone)]
 pub struct KeyBinding {
     pub label: &'static str,
@@ -22,6 +25,9 @@ pub struct KeyboardController {
     pressed: Vec<KeyCode>,
     lookup: HashMap<KeyCode, KeyBinding>,
     last_voltage: f32,
+    octave_shift: i32,
+    min_shift: i32,
+    max_shift: i32,
 }
 
 impl KeyboardController {
@@ -157,17 +163,46 @@ impl KeyboardController {
             lookup.insert(binding.keycode, binding.clone());
         }
 
+        let min_note = white_keys
+            .iter()
+            .chain(black_keys.iter())
+            .map(|k| k.midi)
+            .min()
+            .unwrap_or(MIDI_MIN);
+        let max_note = white_keys
+            .iter()
+            .chain(black_keys.iter())
+            .map(|k| k.midi)
+            .max()
+            .unwrap_or(MIDI_MAX);
+
+        let min_shift = ((MIDI_MIN - min_note) as f32 / 12.0).ceil() as i32;
+        let max_shift = ((MIDI_MAX - max_note) as f32 / 12.0).floor() as i32;
+
         Self {
             white_keys,
             black_keys,
             pressed: Vec::new(),
             lookup,
             last_voltage: midi_to_voltage(48),
+            octave_shift: 0,
+            min_shift,
+            max_shift,
         }
     }
 
     pub fn poll(&mut self) -> Option<ControllerMessage> {
         let mut changed = false;
+
+        if is_key_pressed(KeyCode::Minus) {
+            self.adjust_octave(-1);
+            changed = true;
+        }
+        if is_key_pressed(KeyCode::Equal) {
+            self.adjust_octave(1);
+            changed = true;
+        }
+
         for binding in self.lookup.values() {
             if is_key_pressed(binding.keycode) {
                 self.pressed.push(binding.keycode);
@@ -194,12 +229,13 @@ impl KeyboardController {
     fn current_message(&mut self) -> ControllerMessage {
         if let Some(last) = self.pressed.last() {
             if let Some(binding) = self.lookup.get(last) {
-                let voltage = midi_to_voltage(binding.midi);
+                let midi = (binding.midi + self.octave_shift * 12).clamp(MIDI_MIN, MIDI_MAX);
+                let voltage = midi_to_voltage(midi);
                 self.last_voltage = voltage;
                 return ControllerMessage {
                     gate: true,
                     voltage,
-                    midi_note: binding.midi,
+                    midi_note: midi,
                 };
             }
         }
@@ -208,6 +244,11 @@ impl KeyboardController {
             voltage: self.last_voltage,
             midi_note: -1,
         }
+    }
+
+    fn adjust_octave(&mut self, delta: i32) {
+        let new_shift = (self.octave_shift + delta).clamp(self.min_shift, self.max_shift);
+        self.octave_shift = new_shift;
     }
 
     pub fn is_pressed(&self, keycode: KeyCode) -> bool {
