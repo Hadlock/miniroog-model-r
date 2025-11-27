@@ -1,6 +1,7 @@
 mod controllers;
 mod mixer;
 mod modifiers;
+mod noise;
 mod oscillatorbank;
 mod output;
 mod vco;
@@ -8,12 +9,13 @@ mod vco;
 use std::sync::{Arc, Mutex};
 
 use controllers::KeyboardController;
-use macroquad::{prelude::*, rand::gen_range, text::measure_text};
+use macroquad::{prelude::*, text::measure_text};
 use modifiers::compute_spectrum;
+use noise::{NoiseColor, NoiseGenerator};
 use oscillatorbank::OscillatorBank;
 use output::{AudioEngine, DebugData, SharedPipeline, SynthPipeline};
 use tokio::runtime::Runtime;
-use vco::{spawn_vco, VcoCommand, Waveform, VcoHandle, voltage_to_frequency};
+use vco::{VcoCommand, VcoHandle, Waveform, spawn_vco, voltage_to_frequency};
 
 const SCREEN_WIDTH: f32 = 1280.0;
 const SCREEN_HEIGHT: f32 = 720.0;
@@ -27,6 +29,7 @@ const GLIDE_MIN_SEC: f32 = 0.0;
 const GLIDE_MAX_SEC: f32 = 0.6;
 const MOD_LFO_FREQ: f32 = 4.5;
 const MOD_DEPTH: f32 = 0.3;
+const CONTROLLER_KNOB_SPACING: f32 = 1.2;
 
 const AMBER: Color = Color {
     r: 0.98,
@@ -55,6 +58,7 @@ const WAVEFORMS: [Waveform; 4] = [
     Waveform::Triangle,
     Waveform::Sine,
 ];
+const NOISE_COLOR_COUNT: usize = NoiseColor::COUNT;
 
 #[macroquad::main(window_conf)]
 async fn main() {
@@ -67,8 +71,8 @@ async fn main() {
     let modifiers = modifiers::Modifiers::new();
     let pipeline = Arc::new(Mutex::new(SynthPipeline::new(bank, mixer, modifiers)));
     let debug_data = Arc::new(Mutex::new(DebugData::new(1024)));
-    let _audio = AudioEngine::start(pipeline.clone(), debug_data.clone())
-        .expect("audio output stream");
+    let _audio =
+        AudioEngine::start(pipeline.clone(), debug_data.clone()).expect("audio output stream");
 
     let mut controller = KeyboardController::new();
     let mut panel_state = PanelState::new();
@@ -101,6 +105,9 @@ async fn main() {
             is_mouse_button_down(MouseButton::Left),
             is_mouse_button_released(MouseButton::Left),
         );
+        if is_key_pressed(KeyCode::Tab) {
+            panel_state.mod_noise_color = panel_state.mod_noise_color.next();
+        }
         if let Some(message) = controller.poll(mouse_changed) {
             panel_state.last_midi = message.midi_note;
             panel_state.last_voltage = message.voltage;
@@ -172,7 +179,7 @@ struct PanelLayout {
     mixer_osc_knobs: [Rect; 3],
     mixer_extra_knobs: [Rect; 2],
     mixer_toggle_rects: [Rect; 5],
-    noise_selector_rects: [Rect; 2],
+    noise_selector_rects: [Rect; NOISE_COLOR_COUNT],
     overload_rect: Rect,
     filter_knobs: [Rect; 3],
     filter_env_knobs: [Rect; 3],
@@ -195,31 +202,54 @@ fn compute_panel_layout() -> PanelLayout {
     }
 
     let controller_rect = Rect::new(margin, top, sections[0], section_height);
-    let oscillator_rect =
-        Rect::new(controller_rect.x + controller_rect.w + gap, top, sections[1], section_height);
-    let mixer_rect =
-        Rect::new(oscillator_rect.x + oscillator_rect.w + gap, top, sections[2], section_height);
-    let modifier_rect =
-        Rect::new(mixer_rect.x + mixer_rect.w + gap, top, sections[3], section_height);
-    let output_rect =
-        Rect::new(modifier_rect.x + modifier_rect.w + gap, top, sections[4], section_height);
+    let oscillator_rect = Rect::new(
+        controller_rect.x + controller_rect.w + gap,
+        top,
+        sections[1],
+        section_height,
+    );
+    let mixer_rect = Rect::new(
+        oscillator_rect.x + oscillator_rect.w + gap,
+        top,
+        sections[2],
+        section_height,
+    );
+    let modifier_rect = Rect::new(
+        mixer_rect.x + mixer_rect.w + gap,
+        top,
+        sections[3],
+        section_height,
+    );
+    let output_rect = Rect::new(
+        modifier_rect.x + modifier_rect.w + gap,
+        top,
+        sections[4],
+        section_height,
+    );
 
+    let center_x = controller_rect.x + controller_rect.w * 0.5;
+    let center_spacing = knob_size * CONTROLLER_KNOB_SPACING.max(1.1);
+    let half_spacing = center_spacing * 0.5;
+    let left_center = (center_x - half_spacing).max(controller_rect.x + knob_size * 0.5 + 8.0);
+    let right_center = (center_x + half_spacing)
+        .min(controller_rect.x + controller_rect.w - knob_size * 0.5 - 8.0);
+    let bottom_y = controller_rect.y + controller_rect.h - knob_size - 20.0;
     let controller_knobs = [
         Rect::new(
-            controller_rect.x + controller_rect.w * 0.5 - knob_size * 0.5,
+            center_x - knob_size * 0.5,
             controller_rect.y + 20.0,
             knob_size,
             knob_size,
         ),
         Rect::new(
-            controller_rect.x + 20.0,
-            controller_rect.y + controller_rect.h - knob_size - 20.0,
+            left_center - knob_size * 0.5,
+            bottom_y,
             knob_size,
             knob_size,
         ),
         Rect::new(
-            controller_rect.x + controller_rect.w - knob_size - 20.0,
-            controller_rect.y + controller_rect.h - knob_size - 20.0,
+            right_center - knob_size * 0.5,
+            bottom_y,
             knob_size,
             knob_size,
         ),
@@ -246,7 +276,7 @@ fn compute_panel_layout() -> PanelLayout {
     let mut mixer_osc_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut mixer_extra_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 2];
     let mut mixer_toggle_rects = [Rect::new(0.0, 0.0, 0.0, 0.0); 5];
-    let mut noise_selector_rects = [Rect::new(0.0, 0.0, 0.0, 0.0); 2];
+    let mut noise_selector_rects = [Rect::new(0.0, 0.0, 0.0, 0.0); NOISE_COLOR_COUNT];
     let row_spacing = knob_size + 25.0;
     let osc_x = mixer_rect.x + 20.0;
     let extra_x = mixer_rect.x + mixer_rect.w * 0.55;
@@ -272,13 +302,18 @@ fn compute_panel_layout() -> PanelLayout {
             toggle_size.y,
         );
     }
-    let noise_selector_base = mixer_extra_knobs[1].y + knob_size * 0.5 - 12.0;
-    for index in 0..2 {
+    let noise_button = vec2(64.0, 24.0);
+    let noise_per_row = 3;
+    let noise_start_x = mixer_extra_knobs[1].x;
+    let noise_start_y = mixer_extra_knobs[1].y + knob_size + 36.0;
+    for index in 0..NOISE_COLOR_COUNT {
+        let row = index / noise_per_row;
+        let col = index % noise_per_row;
         noise_selector_rects[index] = Rect::new(
-            mixer_toggle_rects[4].x + mixer_toggle_rects[4].w + 12.0 + index as f32 * (48.0 + 8.0),
-            noise_selector_base,
-            48.0,
-            24.0,
+            noise_start_x + col as f32 * (noise_button.x + 10.0),
+            noise_start_y + row as f32 * (noise_button.y + 8.0),
+            noise_button.x,
+            noise_button.y,
         );
     }
     let overload_rect = Rect::new(
@@ -354,6 +389,8 @@ struct PanelState {
     pitch_current: f32,
     mod_phase: f32,
     mod_signal: f32,
+    mod_noise_color: NoiseColor,
+    mod_noise: NoiseGenerator,
 }
 
 impl PanelState {
@@ -366,10 +403,12 @@ impl PanelState {
             output_panel: OutputKnobs::new(),
             last_midi: -1,
             last_voltage: 0.0,
-             pitch_target: 0.0,
-             pitch_current: 0.0,
-             mod_phase: 0.0,
-             mod_signal: 0.0,
+            pitch_target: 0.0,
+            pitch_current: 0.0,
+            mod_phase: 0.0,
+            mod_signal: 0.0,
+            mod_noise_color: NoiseColor::White,
+            mod_noise: NoiseGenerator::new(),
         }
     }
 
@@ -394,8 +433,8 @@ impl PanelState {
     }
 
     fn cutoff_hz(&self) -> f32 {
-        let base = FILTER_MIN_HZ
-            + self.modifiers_panel.filter[0].value * (FILTER_MAX_HZ - FILTER_MIN_HZ);
+        let base =
+            FILTER_MIN_HZ + self.modifiers_panel.filter[0].value * (FILTER_MAX_HZ - FILTER_MIN_HZ);
         let modulated = base * (1.0 + self.mod_signal * MOD_DEPTH);
         modulated.clamp(FILTER_MIN_HZ, FILTER_MAX_HZ)
     }
@@ -440,7 +479,7 @@ impl PanelState {
     fn update_modulation(&mut self, dt: f32) {
         self.mod_phase = (self.mod_phase + dt * MOD_LFO_FREQ).fract();
         let sine = (self.mod_phase * std::f32::consts::TAU).sin();
-        let noise = gen_range(-1.0, 1.0);
+        let noise = self.mod_noise.sample(self.mod_noise_color);
         let mix = self.controllers.modulation_mix.value;
         self.mod_signal = sine * (1.0 - mix) + noise * mix;
     }
@@ -507,7 +546,7 @@ impl ControllerKnobs {
         Self {
             tune: KnobValue::stub(0.5),
             glide: KnobValue::stub(0.3),
-            modulation_mix: KnobValue::stub(0.5),
+            modulation_mix: KnobValue::implemented(0.5),
         }
     }
 }
@@ -537,12 +576,6 @@ impl OscillatorKnobs {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NoiseColor {
-    White,
-    Pink,
-}
-
 #[derive(Clone)]
 struct MixerKnobs {
     external_input: KnobValue,
@@ -563,7 +596,7 @@ impl MixerKnobs {
                 KnobValue::implemented(0.7),
                 KnobValue::implemented(0.55),
             ],
-            noise: KnobValue::stub(0.0),
+            noise: KnobValue::implemented(0.0),
             osc_enabled: [true; 3],
             ext_enabled: true,
             noise_enabled: true,
@@ -698,11 +731,9 @@ fn handle_mixer_switches(panel_state: &mut PanelState, layout: &PanelLayout) {
     }
     for (index, rect) in layout.noise_selector_rects.iter().enumerate() {
         if rect.contains(mouse) {
-            panel_state.mixer_panel.noise_color = if index == 0 {
-                NoiseColor::White
-            } else {
-                NoiseColor::Pink
-            };
+            if let Some(color) = NoiseColor::VALUES.get(index).copied() {
+                panel_state.mixer_panel.noise_color = color;
+            }
         }
     }
 }
@@ -750,7 +781,13 @@ fn draw_scene(
 }
 
 fn draw_section(rect: &Rect, label: &str) {
-    draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.05, 0.03, 0.02, 0.65));
+    draw_rectangle(
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        Color::new(0.05, 0.03, 0.02, 0.65),
+    );
     draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
     let text = label.to_string();
     draw_text_ex(
@@ -803,7 +840,11 @@ fn draw_controller_info(panel_state: &PanelState, rect: &Rect) {
         rect.y + 40.0,
         &format!(
             "GATE {}\nLAST NOTE {}\nVOLTAGE {:.2} V\nFREQUENCY {:.1} Hz",
-            if panel_state.last_midi >= 0 { "OPEN" } else { "IDLE" },
+            if panel_state.last_midi >= 0 {
+                "OPEN"
+            } else {
+                "IDLE"
+            },
             if panel_state.last_midi >= 0 {
                 panel_state.last_midi.to_string()
             } else {
@@ -816,7 +857,12 @@ fn draw_controller_info(panel_state: &PanelState, rect: &Rect) {
     draw_text_block(
         rect.x + 16.0,
         rect.y + rect.h - 60.0,
-        "MONOPHONIC\nPOLY READY BUS",
+        &format!(
+            "TUNE {:+.2} OCT\nGLIDE {:.2} s\nMOD NOISE {}",
+            panel_state.tune_offset(),
+            panel_state.glide_time(),
+            panel_state.mod_noise_color.label()
+        ),
     );
 }
 
@@ -889,11 +935,7 @@ fn draw_oscillators(
     }
 }
 
-fn draw_mixer(
-    panel_state: &mut PanelState,
-    knob_drag: &mut KnobDragState,
-    layout: &PanelLayout,
-) {
+fn draw_mixer(panel_state: &mut PanelState, knob_drag: &mut KnobDragState, layout: &PanelLayout) {
     draw_text_ex(
         "VOLUME",
         layout.mixer_rect.x + 10.0,
@@ -959,11 +1001,7 @@ fn draw_mixer(
         &layout.noise_selector_rects,
         panel_state.mixer_panel.noise_color,
     );
-    let overload_active = panel_state
-        .oscillator_mix_levels()
-        .iter()
-        .sum::<f32>()
-        > 2.5;
+    let overload_active = panel_state.oscillator_mix_levels().iter().sum::<f32>() > 2.5;
     draw_overload_lamp(layout.overload_rect, overload_active);
 }
 
@@ -996,7 +1034,13 @@ fn draw_toggle_switch(rect: Rect, on: bool, label: &str) {
     } else {
         Color::new(0.1, 0.08, 0.05, 1.0)
     };
-    draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.02, 0.02, 0.02, 1.0));
+    draw_rectangle(
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        Color::new(0.02, 0.02, 0.02, 1.0),
+    );
     draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
     draw_rectangle(
         rect.x + 2.0,
@@ -1017,13 +1061,13 @@ fn draw_toggle_switch(rect: Rect, on: bool, label: &str) {
     );
 }
 
-fn draw_noise_selector(rects: &[Rect; 2], selection: NoiseColor) {
-    let labels = ["WHITE", "PINK"];
+fn draw_noise_selector(rects: &[Rect; NOISE_COLOR_COUNT], selection: NoiseColor) {
     for (index, rect) in rects.iter().enumerate() {
-        let active = match selection {
-            NoiseColor::White => index == 0,
-            NoiseColor::Pink => index == 1,
-        };
+        let color = NoiseColor::VALUES
+            .get(index)
+            .copied()
+            .unwrap_or(NoiseColor::White);
+        let active = selection == color;
         let fill = if active {
             AMBER
         } else {
@@ -1032,7 +1076,7 @@ fn draw_noise_selector(rects: &[Rect; 2], selection: NoiseColor) {
         draw_rectangle(rect.x, rect.y, rect.w, rect.h, fill);
         draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
         draw_text_ex(
-            labels[index],
+            color.label(),
             rect.x + 4.0,
             rect.y + rect.h - 6.0,
             TextParams {
@@ -1061,7 +1105,13 @@ fn draw_overload_lamp(rect: Rect, active: bool) {
     } else {
         Color::new(0.1, 0.08, 0.05, 1.0)
     };
-    draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.02, 0.02, 0.02, 1.0));
+    draw_rectangle(
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        Color::new(0.02, 0.02, 0.02, 1.0),
+    );
     draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
     draw_circle(
         rect.x + rect.w * 0.5,
@@ -1186,7 +1236,10 @@ fn draw_output_panel(
         "MAIN VOL",
         Some(&master),
     );
-    let phones = format!("{:.0}%", panel_state.output_panel.phones_volume.value * 100.0);
+    let phones = format!(
+        "{:.0}%",
+        panel_state.output_panel.phones_volume.value * 100.0
+    );
     draw_knob_widget(
         knob_drag,
         KnobId::OutputPhones,
@@ -1214,10 +1267,26 @@ fn draw_knob_widget(
         radius + 6.0,
         Color::new(0.05, 0.03, 0.02, 1.0),
     );
-    draw_circle(center.x, center.y, radius, Color::new(0.12, 0.12, 0.12, 1.0));
-    draw_circle(center.x, center.y, radius * 0.65, Color::new(0.2, 0.2, 0.2, 1.0));
+    draw_circle(
+        center.x,
+        center.y,
+        radius,
+        Color::new(0.12, 0.12, 0.12, 1.0),
+    );
+    draw_circle(
+        center.x,
+        center.y,
+        radius * 0.65,
+        Color::new(0.2, 0.2, 0.2, 1.0),
+    );
     draw_circle_lines(center.x, center.y, radius + 6.0, 1.0, AMBER_DIM);
-    draw_circle_lines(center.x, center.y, radius, 1.0, Color::new(0.4, 0.4, 0.4, 0.3));
+    draw_circle_lines(
+        center.x,
+        center.y,
+        radius,
+        1.0,
+        Color::new(0.4, 0.4, 0.4, 0.3),
+    );
     let start_angle = -150.0f32.to_radians();
     let angle_range = 300.0f32.to_radians();
     let theta = start_angle + knob.value.clamp(0.0, 1.0) * angle_range;
@@ -1247,7 +1316,12 @@ fn draw_knob_widget(
     );
 }
 
-fn handle_knob_drag(knob_drag: &mut KnobDragState, knob_id: KnobId, rect: Rect, knob: &mut KnobValue) {
+fn handle_knob_drag(
+    knob_drag: &mut KnobDragState,
+    knob_id: KnobId,
+    rect: Rect,
+    knob: &mut KnobValue,
+) {
     let mouse = mouse_position_vec();
     if is_mouse_button_pressed(MouseButton::Left) && rect.contains(mouse) {
         knob_drag.active_knob = Some(knob_id);
@@ -1369,8 +1443,20 @@ fn draw_key(rect: Rect, active: bool, filled: bool, label: &str) {
 }
 
 fn draw_rounded_rect(rect: Rect, radius: f32, color: Color) {
-    draw_rectangle(rect.x + radius, rect.y, rect.w - 2.0 * radius, rect.h, color);
-    draw_rectangle(rect.x, rect.y + radius, rect.w, rect.h - 2.0 * radius, color);
+    draw_rectangle(
+        rect.x + radius,
+        rect.y,
+        rect.w - 2.0 * radius,
+        rect.h,
+        color,
+    );
+    draw_rectangle(
+        rect.x,
+        rect.y + radius,
+        rect.w,
+        rect.h - 2.0 * radius,
+        color,
+    );
     draw_circle(rect.x + radius, rect.y + radius, radius, color);
     draw_circle(rect.x + rect.w - radius, rect.y + radius, radius, color);
     draw_circle(rect.x + radius, rect.y + rect.h - radius, radius, color);
@@ -1397,10 +1483,34 @@ fn draw_rounded_rect_lines(rect: Rect, radius: f32, color: Color) {
     draw_line(left, top_y, left, bottom_y, 1.0, color);
     draw_line(right, top_y, right, bottom_y, 1.0, color);
 
-    draw_corner_arc(vec2(left_x, top_y), std::f32::consts::PI, 1.5 * std::f32::consts::PI, radius, color);
-    draw_corner_arc(vec2(right_x, top_y), 1.5 * std::f32::consts::PI, 0.0, radius, color);
-    draw_corner_arc(vec2(right_x, bottom_y), 0.0, 0.5 * std::f32::consts::PI, radius, color);
-    draw_corner_arc(vec2(left_x, bottom_y), 0.5 * std::f32::consts::PI, std::f32::consts::PI, radius, color);
+    draw_corner_arc(
+        vec2(left_x, top_y),
+        std::f32::consts::PI,
+        1.5 * std::f32::consts::PI,
+        radius,
+        color,
+    );
+    draw_corner_arc(
+        vec2(right_x, top_y),
+        1.5 * std::f32::consts::PI,
+        0.0,
+        radius,
+        color,
+    );
+    draw_corner_arc(
+        vec2(right_x, bottom_y),
+        0.0,
+        0.5 * std::f32::consts::PI,
+        radius,
+        color,
+    );
+    draw_corner_arc(
+        vec2(left_x, bottom_y),
+        0.5 * std::f32::consts::PI,
+        std::f32::consts::PI,
+        radius,
+        color,
+    );
 }
 
 fn draw_corner_arc(center: Vec2, start: f32, end: f32, radius: f32, color: Color) {
@@ -1412,7 +1522,11 @@ fn draw_corner_arc(center: Vec2, start: f32, end: f32, radius: f32, color: Color
         sweep += tau;
     }
     let steps = 10;
-    let mut prev = center + vec2(normalized_start.cos() * radius, normalized_start.sin() * radius);
+    let mut prev = center
+        + vec2(
+            normalized_start.cos() * radius,
+            normalized_start.sin() * radius,
+        );
     for idx in 1..=steps {
         let angle = normalized_start + sweep * (idx as f32 / steps as f32);
         let norm_angle = angle.rem_euclid(tau);
@@ -1452,7 +1566,13 @@ fn draw_debug_button(state: &DebugWindowState) {
             },
         );
     } else {
-        draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.05, 0.03, 0.02, 1.0));
+        draw_rectangle(
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            Color::new(0.05, 0.03, 0.02, 1.0),
+        );
         draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
         draw_centered_text("DEBUGGER", rect, 18);
     }
@@ -1460,7 +1580,13 @@ fn draw_debug_button(state: &DebugWindowState) {
 
 fn draw_debug_window(state: &DebugWindowState, waveform: &[f32], spectrum: &[f32]) {
     let rect = state.rect;
-    draw_rectangle(rect.x, rect.y, rect.w, rect.h, Color::new(0.02, 0.02, 0.02, 0.95));
+    draw_rectangle(
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        Color::new(0.02, 0.02, 0.02, 0.95),
+    );
     draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
     draw_text_ex(
         "DEBUG SCOPE",
@@ -1473,10 +1599,21 @@ fn draw_debug_window(state: &DebugWindowState, waveform: &[f32], spectrum: &[f32
         },
     );
     draw_rectangle_lines(rect.x + rect.w - 32.0, rect.y + 8.0, 24.0, 24.0, 1.0, AMBER);
-    draw_centered_text("X", Rect::new(rect.x + rect.w - 32.0, rect.y + 8.0, 24.0, 24.0), 20);
+    draw_centered_text(
+        "X",
+        Rect::new(rect.x + rect.w - 32.0, rect.y + 8.0, 24.0, 24.0),
+        20,
+    );
 
     let scope_rect = Rect::new(rect.x + 16.0, rect.y + 52.0, rect.w - 32.0, 110.0);
-    draw_rectangle_lines(scope_rect.x, scope_rect.y, scope_rect.w, scope_rect.h, 1.0, AMBER);
+    draw_rectangle_lines(
+        scope_rect.x,
+        scope_rect.y,
+        scope_rect.w,
+        scope_rect.h,
+        1.0,
+        AMBER,
+    );
     draw_waveform(scope_rect, waveform);
 
     let freq_rect = Rect::new(
@@ -1485,7 +1622,14 @@ fn draw_debug_window(state: &DebugWindowState, waveform: &[f32], spectrum: &[f32
         rect.w - 32.0,
         rect.h - scope_rect.h - 90.0,
     );
-    draw_rectangle_lines(freq_rect.x, freq_rect.y, freq_rect.w, freq_rect.h, 1.0, AMBER);
+    draw_rectangle_lines(
+        freq_rect.x,
+        freq_rect.y,
+        freq_rect.w,
+        freq_rect.h,
+        1.0,
+        AMBER,
+    );
     draw_frequency(freq_rect, spectrum, state.sample_rate);
 }
 
@@ -1519,7 +1663,8 @@ fn draw_frequency(rect: Rect, spectrum: &[f32], sample_rate: f32) {
         let x = rect.x + (freq / MAX_ANALYZER_FREQ) * rect.w;
         let magnitude = spectrum[i].max(1e-6);
         let db = 20.0 * magnitude.log10();
-        let normalized = ((db - MIN_ANALYZER_DB) / (MAX_ANALYZER_DB - MIN_ANALYZER_DB)).clamp(0.0, 1.0);
+        let normalized =
+            ((db - MIN_ANALYZER_DB) / (MAX_ANALYZER_DB - MIN_ANALYZER_DB)).clamp(0.0, 1.0);
         let y = rect.y + rect.h - normalized * rect.h;
         if let Some((px, py)) = prev {
             draw_line(px, py, x, y, 2.0, AMBER_DIM);
@@ -1535,7 +1680,14 @@ fn draw_frequency(rect: Rect, spectrum: &[f32], sample_rate: f32) {
     for db in [MIN_ANALYZER_DB, 0.0, MAX_ANALYZER_DB] {
         let ratio = (db - MIN_ANALYZER_DB) / (MAX_ANALYZER_DB - MIN_ANALYZER_DB);
         let y = rect.y + rect.h - ratio * rect.h;
-        draw_line(rect.x, y, rect.x + rect.w, y, 0.5, Color::new(0.2, 0.1, 0.03, 0.4));
+        draw_line(
+            rect.x,
+            y,
+            rect.x + rect.w,
+            y,
+            0.5,
+            Color::new(0.2, 0.1, 0.03, 0.4),
+        );
         draw_text_ex(
             &format!("{db:.0} dB"),
             rect.x - 60.0,
@@ -1552,7 +1704,14 @@ fn draw_frequency(rect: Rect, spectrum: &[f32], sample_rate: f32) {
     for freq in freq_labels {
         let ratio = (freq / MAX_ANALYZER_FREQ).clamp(0.0, 1.0);
         let x = rect.x + ratio * rect.w;
-        draw_line(x, rect.y, x, rect.y + rect.h, 0.3, Color::new(0.2, 0.1, 0.03, 0.3));
+        draw_line(
+            x,
+            rect.y,
+            x,
+            rect.y + rect.h,
+            0.3,
+            Color::new(0.2, 0.1, 0.03, 0.3),
+        );
         draw_text_ex(
             &format!("{:.0}k", freq / 1000.0),
             x - 12.0,
@@ -1604,6 +1763,12 @@ fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline:
         for (index, level) in panel_state.oscillator_mix_levels().iter().enumerate() {
             synth.set_mix_level(index, *level);
         }
+        for (index, enabled) in panel_state.mixer_panel.osc_enabled.iter().enumerate() {
+            synth.set_osc_enabled(index, *enabled);
+        }
+        synth.set_noise_level(panel_state.mixer_panel.noise.value);
+        synth.set_noise_enabled(panel_state.mixer_panel.noise_enabled);
+        synth.set_noise_color(panel_state.mixer_panel.noise_color);
         synth.set_master_level(panel_state.master_level());
         synth.set_cutoff(panel_state.cutoff_hz());
     }
@@ -1614,13 +1779,7 @@ fn feed_stub_knobs(panel_state: &PanelState) {
         stub_oscillator_range(rage.value);
     }
     stub_external_input_volume(panel_state.mixer_panel.external_input.value);
-    stub_noise_volume(panel_state.mixer_panel.noise.value);
-    for enabled in &panel_state.mixer_panel.osc_enabled {
-        stub_mixer_oscillator_toggle(*enabled);
-    }
     stub_mixer_external_toggle(panel_state.mixer_panel.ext_enabled);
-    stub_mixer_noise_toggle(panel_state.mixer_panel.noise_enabled);
-    stub_noise_color(panel_state.mixer_panel.noise_color);
     stub_filter_emphasis(panel_state.modifiers_panel.filter[1].value);
     stub_filter_contour_amount(panel_state.modifiers_panel.filter[2].value);
     stub_filter_attack(panel_state.modifiers_panel.filter_env[0].value);
@@ -1640,24 +1799,8 @@ fn stub_external_input_volume(_value: f32) {
     // TODO: Mix external input audio stream.
 }
 
-fn stub_noise_volume(_value: f32) {
-    // TODO: Route noise generator into the mixer.
-}
-
-fn stub_mixer_oscillator_toggle(_on: bool) {
-    // TODO: Implement per-oscillator mixer enable.
-}
-
 fn stub_mixer_external_toggle(_on: bool) {
     // TODO: Implement external input enable switch.
-}
-
-fn stub_mixer_noise_toggle(_on: bool) {
-    // TODO: Implement noise enable switch.
-}
-
-fn stub_noise_color(_color: NoiseColor) {
-    // TODO: Switch noise generator color between white/pink.
 }
 
 fn stub_filter_emphasis(_value: f32) {

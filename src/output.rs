@@ -1,12 +1,17 @@
 use std::sync::{Arc, Mutex};
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
     SampleFormat, Stream,
+    traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 
-use crate::{mixer::Mixer, modifiers::Modifiers, oscillatorbank::OscillatorBank};
+use crate::{
+    mixer::Mixer,
+    modifiers::Modifiers,
+    noise::{NoiseColor, NoiseGenerator},
+    oscillatorbank::OscillatorBank,
+};
 
 pub type SharedPipeline = Arc<Mutex<SynthPipeline>>;
 pub type DebugHandle = Arc<Mutex<DebugData>>;
@@ -17,6 +22,8 @@ pub struct SynthPipeline {
     modifiers: Modifiers,
     sample_rate: f32,
     voice_buffer: Vec<f32>,
+    noise: NoiseGenerator,
+    noise_color: NoiseColor,
 }
 
 impl SynthPipeline {
@@ -28,6 +35,8 @@ impl SynthPipeline {
             modifiers,
             sample_rate: 44_100.0,
             voice_buffer,
+            noise: NoiseGenerator::new(),
+            noise_color: NoiseColor::White,
         }
     }
 
@@ -41,6 +50,22 @@ impl SynthPipeline {
 
     pub fn set_mix_level(&mut self, index: usize, level: f32) {
         self.mixer.set_level(index, level);
+    }
+
+    pub fn set_osc_enabled(&mut self, index: usize, enabled: bool) {
+        self.mixer.set_osc_enabled(index, enabled);
+    }
+
+    pub fn set_noise_level(&mut self, level: f32) {
+        self.mixer.set_noise_level(level);
+    }
+
+    pub fn set_noise_enabled(&mut self, enabled: bool) {
+        self.mixer.set_noise_enabled(enabled);
+    }
+
+    pub fn set_noise_color(&mut self, color: NoiseColor) {
+        self.noise_color = color;
     }
 
     pub fn set_master_level(&mut self, value: f32) {
@@ -58,7 +83,8 @@ impl SynthPipeline {
     pub fn next_sample(&mut self) -> f32 {
         self.bank
             .fill_sample(self.sample_rate, &mut self.voice_buffer);
-        let mixed = self.mixer.mix(&self.voice_buffer);
+        let noise_sample = self.noise.sample(self.noise_color);
+        let mixed = self.mixer.mix(&self.voice_buffer, noise_sample);
         self.modifiers
             .process(mixed, 1.0 / self.sample_rate.max(1.0))
     }
