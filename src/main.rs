@@ -30,6 +30,7 @@ const GLIDE_MAX_SEC: f32 = 0.6;
 const MOD_LFO_FREQ: f32 = 4.5;
 const MOD_DEPTH: f32 = 0.3;
 const CONTROLLER_KNOB_SPACING: f32 = 1.2;
+const OSC_MOD_DEPTH: f32 = 0.18;
 
 const AMBER: Color = Color {
     r: 0.98,
@@ -127,6 +128,7 @@ async fn main() {
 
         handle_debug_toggle(&mut debug_window, mouse_pos);
         handle_mixer_switches(&mut panel_state, &layout);
+        handle_controller_switches(&mut panel_state, &layout);
         panel_state.refresh_pitch_target();
         panel_state.update_modulation(dt);
         panel_state.apply_pitch(dt, &vcos);
@@ -183,6 +185,8 @@ struct PanelLayout {
     output_rect: Rect,
     modifier_loudness_split: f32,
     controller_knobs: [Rect; 3],
+    controller_mod_toggle: Rect,
+    controller_osc3_toggle: Rect,
     osc_range_knobs: [Rect; 3],
     osc_freq_knobs: [Rect; 3],
     osc_wave_knobs: [Rect; 3],
@@ -264,6 +268,19 @@ fn compute_panel_layout() -> PanelLayout {
             knob_size,
         ),
     ];
+    let toggle_size = vec2(70.0, 28.0);
+    let osc_mod_toggle = Rect::new(
+        center_x - toggle_size.x * 0.5,
+        controller_knobs[0].y + knob_size + 18.0,
+        toggle_size.x,
+        toggle_size.y,
+    );
+    let osc3_toggle = Rect::new(
+        controller_knobs[2].x + controller_knobs[2].w * 0.5 - toggle_size.x * 0.5,
+        controller_knobs[2].y + knob_size + 36.0,
+        toggle_size.x,
+        toggle_size.y,
+    );
 
     let mut osc_range_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut osc_freq_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
@@ -339,7 +356,7 @@ fn compute_panel_layout() -> PanelLayout {
     let loudness_split = modifier_rect.y + modifier_rect.h * 0.58;
     for index in 0..3 {
         let x = modifier_rect.x + index as f32 * (knob_size + column_spacing);
-        loudness_knobs[index] = Rect::new(x, loudness_split + 78.0, knob_size, knob_size);
+        loudness_knobs[index] = Rect::new(x, loudness_split + 80.0, knob_size, knob_size);
     }
 
     let output_knobs = [
@@ -366,6 +383,8 @@ fn compute_panel_layout() -> PanelLayout {
         output_rect,
         modifier_loudness_split: loudness_split,
         controller_knobs,
+        controller_mod_toggle: osc_mod_toggle,
+        controller_osc3_toggle: osc3_toggle,
         osc_range_knobs,
         osc_freq_knobs,
         osc_wave_knobs,
@@ -394,6 +413,8 @@ struct PanelState {
     pitch_current: f32,
     mod_phase: f32,
     mod_signal: f32,
+    osc_modulation: bool,
+    osc3_control: bool,
     mod_noise_color: NoiseColor,
     mod_noise: NoiseGenerator,
 }
@@ -412,6 +433,8 @@ impl PanelState {
             pitch_current: 0.0,
             mod_phase: 0.0,
             mod_signal: 0.0,
+            osc_modulation: false,
+            osc3_control: true,
             mod_noise_color: NoiseColor::White,
             mod_noise: NoiseGenerator::new(),
         }
@@ -501,6 +524,14 @@ impl PanelState {
         let noise = self.mod_noise.sample(self.mod_noise_color);
         let mix = self.controllers.modulation_mix.value;
         self.mod_signal = sine * (1.0 - mix) + noise * mix;
+    }
+
+    fn modulation_pitch_offset(&self) -> f32 {
+        if self.osc_modulation {
+            self.mod_signal * OSC_MOD_DEPTH
+        } else {
+            0.0
+        }
     }
 }
 
@@ -753,6 +784,19 @@ fn handle_mixer_switches(panel_state: &mut PanelState, layout: &PanelLayout) {
     }
 }
 
+fn handle_controller_switches(panel_state: &mut PanelState, layout: &PanelLayout) {
+    if !is_mouse_button_pressed(MouseButton::Left) {
+        return;
+    }
+    let mouse = mouse_position_vec();
+    if layout.controller_mod_toggle.contains(mouse) {
+        panel_state.osc_modulation = !panel_state.osc_modulation;
+    }
+    if layout.controller_osc3_toggle.contains(mouse) {
+        panel_state.osc3_control = !panel_state.osc3_control;
+    }
+}
+
 fn draw_scene(
     texture: &Texture2D,
     panel_state: &mut PanelState,
@@ -847,6 +891,38 @@ fn draw_controllers_panel(
         None,
     );
     draw_controller_info(panel_state, &layout.controller_rect);
+
+    draw_text_ex(
+        "OSCILLATION MOD",
+        layout.controller_mod_toggle.x,
+        layout.controller_mod_toggle.y - 6.0,
+        TextParams {
+            font_size: 14,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+    draw_toggle_switch(
+        layout.controller_mod_toggle,
+        panel_state.osc_modulation,
+        "ON",
+    );
+
+    draw_text_ex(
+        "OSC. 3 CONTROL",
+        layout.controller_osc3_toggle.x,
+        layout.controller_osc3_toggle.y - 6.0,
+        TextParams {
+            font_size: 14,
+            color: AMBER_DIM,
+            ..Default::default()
+        },
+    );
+    draw_toggle_switch(
+        layout.controller_osc3_toggle,
+        panel_state.osc3_control,
+        "ON",
+    );
 }
 
 fn draw_controller_info(panel_state: &PanelState, rect: &Rect) {
@@ -1832,10 +1908,16 @@ fn format_percent(value: f32) -> String {
 }
 
 fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline: &SharedPipeline) {
+    let pitch_mod = panel_state.modulation_pitch_offset();
     for (index, (_, tx)) in vcos.iter().enumerate() {
         let detune = panel_state.osc_detune(index);
         let waveform = value_to_waveform(panel_state.oscillator.waveform[index].value);
-        let base_voltage = panel_state.pitch_current + panel_state.osc_range_offset(index);
+        let mut base_voltage = if index == 2 && !panel_state.osc3_control {
+            panel_state.osc_range_offset(index)
+        } else {
+            panel_state.pitch_current + panel_state.osc_range_offset(index)
+        };
+        base_voltage += pitch_mod;
         let _ = tx.send(VcoCommand::SetVoltage(base_voltage));
         let _ = tx.send(VcoCommand::SetDetune(detune));
         let _ = tx.send(VcoCommand::SetWaveform(waveform));
