@@ -85,7 +85,15 @@ async fn main() {
 
     loop {
         let layout = compute_panel_layout();
-        if let Some(message) = controller.poll() {
+        let keyboard_layout = build_keyboard_layout(&controller);
+        let mouse_pos = mouse_position_vec();
+        let mouse_changed = controller.handle_mouse_keys(
+            keyboard_layout.hit_test(mouse_pos),
+            is_mouse_button_pressed(MouseButton::Left),
+            is_mouse_button_down(MouseButton::Left),
+            is_mouse_button_released(MouseButton::Left),
+        );
+        if let Some(message) = controller.poll(mouse_changed) {
             panel_state.last_midi = message.midi_note;
             panel_state.last_voltage = message.voltage;
             for (_, tx) in vcos.iter() {
@@ -96,8 +104,7 @@ async fn main() {
             }
         }
 
-        let mouse = mouse_position_vec();
-        handle_debug_toggle(&mut debug_window, mouse);
+        handle_debug_toggle(&mut debug_window, mouse_pos);
 
         {
             let snapshot = {
@@ -116,6 +123,7 @@ async fn main() {
             &mut knob_drag,
             &controller,
             &layout,
+            &keyboard_layout,
             &waveform_cache,
             &spectrum_cache,
             &debug_window,
@@ -149,7 +157,7 @@ struct PanelLayout {
     output_rect: Rect,
     modifier_loudness_split: f32,
     controller_knobs: [Rect; 3],
-    osc_range_knob: Rect,
+    osc_range_knobs: [Rect; 3],
     osc_freq_knobs: [Rect; 3],
     osc_wave_knobs: [Rect; 3],
     mixer_knobs: [Rect; 5],
@@ -204,17 +212,19 @@ fn compute_panel_layout() -> PanelLayout {
         ),
     ];
 
-    let osc_range_knob =
-        Rect::new(oscillator_rect.x + oscillator_rect.w * 0.5 - knob_size * 0.5, oscillator_rect.y + 10.0, knob_size, knob_size);
-
+    let mut osc_range_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut osc_freq_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut osc_wave_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     for index in 0..3 {
-        let y = oscillator_rect.y + 110.0 + index as f32 * 95.0;
-        osc_freq_knobs[index] = Rect::new(oscillator_rect.x + 20.0, y, knob_size, knob_size);
+        let y = oscillator_rect.y + 30.0 + index as f32 * 110.0;
+        let row_y = y;
+        let spacing = (oscillator_rect.w - knob_size * 3.0) / 2.0;
+        let x0 = oscillator_rect.x;
+        osc_range_knobs[index] = Rect::new(x0, row_y, knob_size, knob_size);
+        osc_freq_knobs[index] = Rect::new(x0 + knob_size + spacing, row_y, knob_size, knob_size);
         osc_wave_knobs[index] = Rect::new(
-            oscillator_rect.x + oscillator_rect.w - knob_size - 20.0,
-            y,
+            x0 + 2.0 * (knob_size + spacing),
+            row_y,
             knob_size,
             knob_size,
         );
@@ -269,7 +279,7 @@ fn compute_panel_layout() -> PanelLayout {
         output_rect,
         modifier_loudness_split: loudness_split,
         controller_knobs,
-        osc_range_knob,
+        osc_range_knobs,
         osc_freq_knobs,
         osc_wave_knobs,
         mixer_knobs,
@@ -395,7 +405,7 @@ impl ControllerKnobs {
 
 #[derive(Clone)]
 struct OscillatorKnobs {
-    range: KnobValue,
+    range: [KnobValue; 3],
     freq: [KnobValue; 3],
     waveform: [KnobValue; 3],
 }
@@ -403,7 +413,7 @@ struct OscillatorKnobs {
 impl OscillatorKnobs {
     fn new() -> Self {
         Self {
-            range: KnobValue::stub(0.5),
+            range: std::array::from_fn(|_| KnobValue::stub(0.5)),
             freq: [
                 KnobValue::implemented(0.5),
                 KnobValue::implemented(detune_to_value(0.03)),
@@ -488,7 +498,9 @@ enum KnobId {
     ControllersTune,
     ControllersGlide,
     ControllersModMix,
-    OscRange,
+    OscRange1,
+    OscRange2,
+    OscRange3,
     OscFreq1,
     OscFreq2,
     OscFreq3,
@@ -545,6 +557,7 @@ fn draw_scene(
     knob_drag: &mut KnobDragState,
     controller: &KeyboardController,
     layout: &PanelLayout,
+    keyboard_layout: &KeyboardLayout,
     waveform: &[f32],
     spectrum: &[f32],
     debug_window: &DebugWindowState,
@@ -573,7 +586,7 @@ fn draw_scene(
     draw_mixer(panel_state, knob_drag, layout);
     draw_modifiers(panel_state, knob_drag, layout);
     draw_output_panel(panel_state, knob_drag, layout);
-    draw_keyboard(controller);
+    draw_keyboard(controller, keyboard_layout);
     draw_debug_button(debug_window);
     if debug_window.open {
         draw_debug_window(debug_window, waveform, spectrum);
@@ -672,15 +685,20 @@ fn draw_oscillators(
     knob_drag: &mut KnobDragState,
     layout: &PanelLayout,
 ) {
-    draw_knob_widget(
-        knob_drag,
-        KnobId::OscRange,
-        layout.osc_range_knob,
-        &mut panel_state.oscillator.range,
-        "RANGE",
-        None,
-    );
     for index in 0..3 {
+        let range_label = format!("OSC {} RANGE", index + 1);
+        draw_knob_widget(
+            knob_drag,
+            match index {
+                0 => KnobId::OscRange1,
+                1 => KnobId::OscRange2,
+                _ => KnobId::OscRange3,
+            },
+            layout.osc_range_knobs[index],
+            &mut panel_state.oscillator.range[index],
+            &range_label,
+            None,
+        );
         let freq_rect = layout.osc_freq_knobs[index];
         let wave_rect = layout.osc_wave_knobs[index];
         let detune = panel_state.osc_detune(index);
@@ -959,7 +977,34 @@ fn handle_knob_drag(knob_drag: &mut KnobDragState, knob_id: KnobId, rect: Rect, 
     }
 }
 
-fn draw_keyboard(controller: &KeyboardController) {
+struct KeyVisual {
+    rect: Rect,
+    keycode: KeyCode,
+    label: &'static str,
+}
+
+struct KeyboardLayout {
+    white: Vec<KeyVisual>,
+    black: Vec<KeyVisual>,
+}
+
+impl KeyboardLayout {
+    fn hit_test(&self, point: Vec2) -> Option<KeyCode> {
+        for key in &self.black {
+            if key.rect.contains(point) {
+                return Some(key.keycode);
+            }
+        }
+        for key in &self.white {
+            if key.rect.contains(point) {
+                return Some(key.keycode);
+            }
+        }
+        None
+    }
+}
+
+fn build_keyboard_layout(controller: &KeyboardController) -> KeyboardLayout {
     let area = Rect::new(
         40.0,
         PANEL_HEIGHT + 40.0,
@@ -976,18 +1021,41 @@ fn draw_keyboard(controller: &KeyboardController) {
     let white_y = area.y + area.h - key_size;
     let black_y = white_y - key_size - spacing * 0.7;
 
+    let mut white = Vec::new();
     for (index, binding) in controller.white_keys().iter().enumerate() {
         let x = start_x + index as f32 * (key_size + spacing);
         let rect = Rect::new(x, white_y, key_size, key_size);
-        let active = controller.is_pressed(binding.keycode);
-        draw_key(rect, active, false, binding.label);
+        white.push(KeyVisual {
+            rect,
+            keycode: binding.keycode,
+            label: binding.label,
+        });
     }
 
+    let mut black = Vec::new();
     for binding in controller.black_keys() {
-        let center = start_x + binding.position_hint * (key_size + spacing) + key_size * 0.5;
+        let center = start_x + binding.position_hint * total_width;
         let rect = Rect::new(center - key_size * 0.5, black_y, key_size, key_size);
-        let active = controller.is_pressed(binding.keycode);
-        draw_key(rect, active, true, binding.label);
+        if rect.x + rect.w >= area.x && rect.x <= area.x + area.w {
+            black.push(KeyVisual {
+                rect,
+                keycode: binding.keycode,
+                label: binding.label,
+            });
+        }
+    }
+
+    KeyboardLayout { white, black }
+}
+
+fn draw_keyboard(controller: &KeyboardController, layout: &KeyboardLayout) {
+    for key in &layout.white {
+        let active = controller.is_pressed(key.keycode);
+        draw_key(key.rect, active, false, key.label);
+    }
+    for key in &layout.black {
+        let active = controller.is_pressed(key.keycode);
+        draw_key(key.rect, active, true, key.label);
     }
 }
 
@@ -1249,7 +1317,9 @@ fn feed_stub_knobs(panel_state: &PanelState) {
     stub_controllers_tune(panel_state.controllers.tune.value);
     stub_controllers_glide(panel_state.controllers.glide.value);
     stub_controllers_mod_mix(panel_state.controllers.modulation_mix.value);
-    stub_oscillator_range(panel_state.oscillator.range.value);
+    for rage in &panel_state.oscillator.range {
+        stub_oscillator_range(rage.value);
+    }
     stub_external_input_volume(panel_state.mixer_panel.external_input.value);
     stub_noise_volume(panel_state.mixer_panel.noise.value);
     stub_filter_emphasis(panel_state.modifiers_panel.filter[1].value);

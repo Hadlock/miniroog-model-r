@@ -28,6 +28,7 @@ pub struct KeyboardController {
     octave_shift: i32,
     min_shift: i32,
     max_shift: i32,
+    mouse_active: Option<KeyCode>,
 }
 
 impl KeyboardController {
@@ -100,61 +101,61 @@ impl KeyboardController {
                 label: "S",
                 keycode: KeyCode::S,
                 midi: 49,
-                position_hint: 0.5,
+                position_hint: 0.105,
             },
             KeyBinding {
                 label: "D",
                 keycode: KeyCode::D,
                 midi: 51,
-                position_hint: 1.5,
+                position_hint: 0.205,
             },
             KeyBinding {
                 label: "G",
                 keycode: KeyCode::G,
                 midi: 54,
-                position_hint: 3.5,
+                position_hint: 0.3888889,
             },
             KeyBinding {
                 label: "H",
                 keycode: KeyCode::H,
                 midi: 56,
-                position_hint: 4.5,
+                position_hint: 0.5,
             },
             KeyBinding {
                 label: "J",
                 keycode: KeyCode::J,
                 midi: 58,
-                position_hint: 5.5,
+                position_hint: 0.6111111,
             },
             KeyBinding {
                 label: "L",
                 keycode: KeyCode::L,
                 midi: 61,
-                position_hint: 6.5,
+                position_hint: 0.79,
             },
             KeyBinding {
                 label: ";",
                 keycode: KeyCode::Semicolon,
                 midi: 63,
-                position_hint: 7.5,
+                position_hint: 0.9,
             },
             KeyBinding {
                 label: "'",
                 keycode: KeyCode::Apostrophe,
                 midi: 66,
-                position_hint: 8.5,
+                position_hint: 1.05,
             },
             KeyBinding {
                 label: "]",
                 keycode: KeyCode::RightBracket,
                 midi: 68,
-                position_hint: 9.5,
+                position_hint: 1.2,
             },
             KeyBinding {
                 label: "\\",
                 keycode: KeyCode::Backslash,
                 midi: 70,
-                position_hint: 10.5,
+                position_hint: 1.35,
             },
         ];
 
@@ -188,11 +189,12 @@ impl KeyboardController {
             octave_shift: 0,
             min_shift,
             max_shift,
+            mouse_active: None,
         }
     }
 
-    pub fn poll(&mut self) -> Option<ControllerMessage> {
-        let mut changed = false;
+    pub fn poll(&mut self, external_change: bool) -> Option<ControllerMessage> {
+        let mut changed = external_change;
 
         if is_key_pressed(KeyCode::Minus) {
             self.adjust_octave(-1);
@@ -203,20 +205,13 @@ impl KeyboardController {
             changed = true;
         }
 
-        for binding in self.lookup.values() {
-            if is_key_pressed(binding.keycode) {
-                self.pressed.push(binding.keycode);
-                changed = true;
+        let keycodes: Vec<KeyCode> = self.lookup.keys().copied().collect();
+        for keycode in keycodes {
+            if is_key_pressed(keycode) {
+                changed |= self.press_key(keycode);
             }
-            if is_key_released(binding.keycode) {
-                if let Some(index) = self
-                    .pressed
-                    .iter()
-                    .position(|code| *code == binding.keycode)
-                {
-                    self.pressed.remove(index);
-                    changed = true;
-                }
+            if is_key_released(keycode) {
+                changed |= self.release_key(keycode);
             }
         }
         if changed {
@@ -224,6 +219,42 @@ impl KeyboardController {
         } else {
             None
         }
+    }
+
+    pub fn handle_mouse_keys(
+        &mut self,
+        hovered: Option<KeyCode>,
+        mouse_pressed: bool,
+        mouse_down: bool,
+        mouse_released: bool,
+    ) -> bool {
+        let mut changed = false;
+        if mouse_pressed {
+            if let Some(code) = hovered {
+                self.mouse_active = Some(code);
+                changed |= self.press_key(code);
+            }
+        }
+        if mouse_down {
+            if let Some(active) = self.mouse_active {
+                if let Some(hit) = hovered {
+                    if hit != active {
+                        changed |= self.release_key(active);
+                        self.mouse_active = Some(hit);
+                        changed |= self.press_key(hit);
+                    }
+                } else {
+                    changed |= self.release_key(active);
+                    self.mouse_active = None;
+                }
+            }
+        }
+        if mouse_released {
+            if let Some(active) = self.mouse_active.take() {
+                changed |= self.release_key(active);
+            }
+        }
+        changed
     }
 
     fn current_message(&mut self) -> ControllerMessage {
@@ -249,6 +280,24 @@ impl KeyboardController {
     fn adjust_octave(&mut self, delta: i32) {
         let new_shift = (self.octave_shift + delta).clamp(self.min_shift, self.max_shift);
         self.octave_shift = new_shift;
+    }
+
+    fn press_key(&mut self, keycode: KeyCode) -> bool {
+        if self.pressed.contains(&keycode) {
+            false
+        } else {
+            self.pressed.push(keycode);
+            true
+        }
+    }
+
+    fn release_key(&mut self, keycode: KeyCode) -> bool {
+        if let Some(index) = self.pressed.iter().position(|code| *code == keycode) {
+            self.pressed.remove(index);
+            true
+        } else {
+            false
+        }
     }
 
     pub fn is_pressed(&self, keycode: KeyCode) -> bool {
