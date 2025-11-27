@@ -171,6 +171,7 @@ struct PanelLayout {
     oscillator_rect: Rect,
     mixer_rect: Rect,
     modifier_rect: Rect,
+    filter_env_divider: f32,
     output_rect: Rect,
     modifier_loudness_split: f32,
     controller_knobs: [Rect; 3],
@@ -321,7 +322,11 @@ fn compute_panel_layout() -> PanelLayout {
     for index in 0..3 {
         let x = modifier_rect.x + index as f32 * (knob_size + column_spacing);
         filter_knobs[index] = Rect::new(x, modifier_rect.y + 20.0, knob_size, knob_size);
-        filter_env_knobs[index] = Rect::new(x, modifier_rect.y + 120.0, knob_size, knob_size);
+    }
+    let filter_env_divider = modifier_rect.y + knob_size + 60.0;
+    for index in 0..3 {
+        let x = modifier_rect.x + index as f32 * (knob_size + column_spacing);
+        filter_env_knobs[index] = Rect::new(x, filter_env_divider + 24.0, knob_size, knob_size);
     }
     let loudness_split = modifier_rect.y + modifier_rect.h * 0.58;
     for index in 0..3 {
@@ -349,6 +354,7 @@ fn compute_panel_layout() -> PanelLayout {
         oscillator_rect,
         mixer_rect,
         modifier_rect,
+        filter_env_divider,
         output_rect,
         modifier_loudness_split: loudness_split,
         controller_knobs,
@@ -1125,6 +1131,28 @@ fn draw_modifiers(
     knob_drag: &mut KnobDragState,
     layout: &PanelLayout,
 ) {
+    let filter_line = layout.filter_env_divider;
+    draw_line(
+        layout.modifier_rect.x + 8.0,
+        filter_line,
+        layout.modifier_rect.x + layout.modifier_rect.w - 8.0,
+        filter_line,
+        1.0,
+        AMBER_DIM,
+    );
+    let filter_label = "FILTER CONTOUR";
+    let filter_metrics = measure_text(filter_label, None, 18, 1.0);
+    draw_text_ex(
+        filter_label,
+        layout.modifier_rect.x + layout.modifier_rect.w * 0.5 - filter_metrics.width * 0.5,
+        filter_line + 20.0,
+        TextParams {
+            font_size: 18,
+            color: AMBER,
+            ..Default::default()
+        },
+    );
+
     let line_y = layout.modifier_loudness_split + 10.0;
     draw_line(
         layout.modifier_rect.x + 8.0,
