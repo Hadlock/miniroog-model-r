@@ -1,6 +1,6 @@
 # MiniRoog Model R
 
-![systemr logo](https://github.com/hadlock/systemr/blob/main/static/systemr-logo.png)
+![systemr logo](https://github.com/Hadlock/miniroog-model-r/blob/master/static/MiniRoog%20Model%20R.png)
 
 ![MiniRoog screenshot](static/screenshot.png)
 
