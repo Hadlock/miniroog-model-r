@@ -1,15 +1,9 @@
-    Updating crates.io index
-error: failed to select a version for `quad-alsa-sys`.
-    ... required by package `quad-snd v0.2.0`
-    ... which satisfies dependency `quad-snd = "^0.2"` of package `macroquad v0.4.0`
-    ... which satisfies dependency `macroquad = "^0.4"` of package `miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)`
-versions that meet the requirements `^0.3.2` are: 0.3.2
-
-the package `quad-alsa-sys` links to the native library `alsa`, but it conflicts with a previous package which links to `alsa` as well:
-package `alsa-sys v0.3.1`
-    ... which satisfies dependency `alsa-sys = "^0.3.1"` of package `alsa v0.7.0`
-    ... which satisfies dependency `alsa = "^0.7"` of package `cpal v0.15.0`
-    ... which satisfies dependency `cpal = "^0.15"` of package `miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)`
-Only one package in the dependency graph may specify the same links value. This helps ensure that only one copy of a native library is linked in the final binary. Try to adjust your dependencies so that only one package uses the `links = "alsa"` value. For more information, see https://doc.rust-lang.org/cargo/reference/resolver.html#links.
-
-failed to select a version for `quad-alsa-sys` which could resolve this conflict
+    Blocking waiting for file lock on build directory
+   0.653865208s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint: fingerprint dirty for miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)/Check { test: false }/TargetInner { name: "miniroog-model-r", doc: true, ..: with_path("/Users/chedstrom/github/miniroog-model-r/src/main.rs", Edition2024) }
+   0.653884125s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+   0.656590542s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint: fingerprint dirty for miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)/Check { test: true }/TargetInner { name: "miniroog-model-r", doc: true, ..: with_path("/Users/chedstrom/github/miniroog-model-r/src/main.rs", Edition2024) }
+   0.656597625s  INFO prepare_target{force=false package_id=miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r) target="miniroog-model-r"}: cargo::core::compiler::fingerprint:     dirty: FsStatusOutdated(Stale)
+    Checking miniroog-model-r v0.1.0 (/Users/chedstrom/github/miniroog-model-r)
+error: could not compile `miniroog-model-r` (bin "miniroog-model-r") due to 2 previous errors; 1 warning emitted
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `miniroog-model-r` (bin "miniroog-model-r" test) due to 2 previous errors; 1 warning emitted
