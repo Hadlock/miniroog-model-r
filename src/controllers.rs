@@ -2,8 +2,6 @@ use std::collections::HashMap;
 
 use macroquad::prelude::*;
 
-use crate::vco::Waveform;
-
 #[derive(Clone)]
 pub struct KeyBinding {
     pub label: &'static str,
@@ -39,55 +37,55 @@ impl KeyboardController {
                 label: "X",
                 keycode: KeyCode::X,
                 midi: 50,
-                position_hint: 0.1,
+                position_hint: 1.0,
             },
             KeyBinding {
                 label: "C",
                 keycode: KeyCode::C,
                 midi: 52,
-                position_hint: 0.2,
+                position_hint: 2.0,
             },
             KeyBinding {
                 label: "V",
                 keycode: KeyCode::V,
                 midi: 53,
-                position_hint: 0.3,
+                position_hint: 3.0,
             },
             KeyBinding {
                 label: "B",
                 keycode: KeyCode::B,
                 midi: 55,
-                position_hint: 0.4,
+                position_hint: 4.0,
             },
             KeyBinding {
                 label: "N",
                 keycode: KeyCode::N,
                 midi: 57,
-                position_hint: 0.5,
+                position_hint: 5.0,
             },
             KeyBinding {
                 label: "M",
                 keycode: KeyCode::M,
                 midi: 59,
-                position_hint: 0.6,
+                position_hint: 6.0,
             },
             KeyBinding {
                 label: ",",
                 keycode: KeyCode::Comma,
                 midi: 60,
-                position_hint: 0.7,
+                position_hint: 7.0,
             },
             KeyBinding {
                 label: ".",
                 keycode: KeyCode::Period,
                 midi: 62,
-                position_hint: 0.8,
+                position_hint: 8.0,
             },
             KeyBinding {
                 label: "/",
                 keycode: KeyCode::Slash,
                 midi: 64,
-                position_hint: 0.9,
+                position_hint: 9.0,
             },
         ];
 
@@ -96,61 +94,61 @@ impl KeyboardController {
                 label: "S",
                 keycode: KeyCode::S,
                 midi: 49,
-                position_hint: 0.05,
+                position_hint: 0.5,
             },
             KeyBinding {
                 label: "D",
                 keycode: KeyCode::D,
                 midi: 51,
-                position_hint: 0.15,
+                position_hint: 1.5,
             },
             KeyBinding {
                 label: "G",
                 keycode: KeyCode::G,
                 midi: 54,
-                position_hint: 0.35,
+                position_hint: 3.5,
             },
             KeyBinding {
                 label: "H",
                 keycode: KeyCode::H,
                 midi: 56,
-                position_hint: 0.45,
+                position_hint: 4.5,
             },
             KeyBinding {
                 label: "J",
                 keycode: KeyCode::J,
                 midi: 58,
-                position_hint: 0.55,
+                position_hint: 5.5,
             },
             KeyBinding {
                 label: "L",
                 keycode: KeyCode::L,
                 midi: 61,
-                position_hint: 0.72,
+                position_hint: 6.5,
             },
             KeyBinding {
                 label: ";",
                 keycode: KeyCode::Semicolon,
                 midi: 63,
-                position_hint: 0.82,
+                position_hint: 7.5,
             },
             KeyBinding {
                 label: "'",
                 keycode: KeyCode::Apostrophe,
                 midi: 66,
-                position_hint: 0.9,
+                position_hint: 8.5,
             },
             KeyBinding {
                 label: "]",
                 keycode: KeyCode::RightBracket,
                 midi: 68,
-                position_hint: 0.95,
+                position_hint: 9.5,
             },
             KeyBinding {
                 label: "\\",
                 keycode: KeyCode::Backslash,
                 midi: 70,
-                position_hint: 1.0,
+                position_hint: 10.5,
             },
         ];
 
@@ -227,13 +225,4 @@ impl KeyboardController {
 
 pub fn midi_to_voltage(midi_note: i32) -> f32 {
     (midi_note as f32 - 33.0) / 12.0
-}
-
-pub fn cycle_waveform(current: Waveform) -> Waveform {
-    match current {
-        Waveform::Saw => Waveform::Pulse,
-        Waveform::Pulse => Waveform::Triangle,
-        Waveform::Triangle => Waveform::Sine,
-        Waveform::Sine => Waveform::Saw,
-    }
 }

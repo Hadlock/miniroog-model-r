@@ -18,6 +18,10 @@ use vco::{spawn_vco, VcoCommand, Waveform, VcoHandle, voltage_to_frequency};
 const SCREEN_WIDTH: f32 = 1280.0;
 const SCREEN_HEIGHT: f32 = 720.0;
 const PANEL_HEIGHT: f32 = 360.0;
+const KEY_FONT_SIZE: u16 = 35;
+const MAX_ANALYZER_FREQ: f32 = 25_000.0;
+const MIN_ANALYZER_DB: f32 = -20.0;
+const MAX_ANALYZER_DB: f32 = 20.0;
 
 const AMBER: Color = Color {
     r: 0.98,
@@ -35,12 +39,6 @@ const BACKGROUND: Color = Color {
     r: 0.02,
     g: 0.02,
     b: 0.02,
-    a: 1.0,
-};
-const PANEL_BROWN: Color = Color {
-    r: 0.12,
-    g: 0.08,
-    b: 0.05,
     a: 1.0,
 };
 const DETUNE_RANGE: f32 = 0.5;
@@ -69,6 +67,7 @@ async fn main() {
 
     let mut controller = KeyboardController::new();
     let mut panel_state = PanelState::new();
+    let mut knob_drag = KnobDragState::default();
     let mut debug_window = DebugWindowState::new();
     sync_audio_from_panel(&panel_state, &vcos, &pipeline);
 
@@ -79,6 +78,10 @@ async fn main() {
 
     let mut waveform_cache = Vec::new();
     let mut spectrum_cache = Vec::new();
+
+    if let Ok(synth) = pipeline.lock() {
+        debug_window.set_sample_rate(synth.sample_rate());
+    }
 
     loop {
         let layout = compute_panel_layout();
@@ -110,6 +113,7 @@ async fn main() {
         draw_scene(
             &panel_texture,
             &mut panel_state,
+            &mut knob_drag,
             &controller,
             &layout,
             &waveform_cache,
@@ -282,9 +286,6 @@ struct PanelState {
     output_panel: OutputKnobs,
     last_midi: i32,
     last_voltage: f32,
-    active_knob: Option<KnobId>,
-    knob_origin_value: f32,
-    knob_origin_y: f32,
 }
 
 impl PanelState {
@@ -297,9 +298,6 @@ impl PanelState {
             output_panel: OutputKnobs::new(),
             last_midi: -1,
             last_voltage: 0.0,
-            active_knob: None,
-            knob_origin_value: 0.0,
-            knob_origin_y: 0.0,
         }
     }
 
@@ -329,6 +327,7 @@ impl PanelState {
 struct DebugWindowState {
     open: bool,
     rect: Rect,
+    sample_rate: f32,
 }
 
 impl DebugWindowState {
@@ -336,8 +335,20 @@ impl DebugWindowState {
         Self {
             open: true,
             rect: Rect::new(20.0, 20.0, 400.0, 400.0),
+            sample_rate: 44_100.0,
         }
     }
+
+    fn set_sample_rate(&mut self, sr: f32) {
+        self.sample_rate = sr;
+    }
+}
+
+#[derive(Default)]
+struct KnobDragState {
+    active_knob: Option<KnobId>,
+    origin_value: f32,
+    origin_y: f32,
 }
 
 #[derive(Clone)]
@@ -528,6 +539,7 @@ fn handle_debug_toggle(state: &mut DebugWindowState, mouse: Vec2) {
 fn draw_scene(
     texture: &Texture2D,
     panel_state: &mut PanelState,
+    knob_drag: &mut KnobDragState,
     controller: &KeyboardController,
     layout: &PanelLayout,
     waveform: &[f32],
@@ -553,11 +565,11 @@ fn draw_scene(
     draw_section(&layout.modifier_rect, "MODIFIERS");
     draw_section(&layout.output_rect, "OUTPUT");
 
-    draw_controllers_panel(panel_state, layout);
-    draw_oscillators(panel_state, layout);
-    draw_mixer(panel_state, layout);
-    draw_modifiers(panel_state, layout);
-    draw_output_panel(panel_state, layout);
+    draw_controllers_panel(panel_state, knob_drag, layout);
+    draw_oscillators(panel_state, knob_drag, layout);
+    draw_mixer(panel_state, knob_drag, layout);
+    draw_modifiers(panel_state, knob_drag, layout);
+    draw_output_panel(panel_state, knob_drag, layout);
     draw_keyboard(controller);
     draw_debug_button(debug_window);
     if debug_window.open {
@@ -581,9 +593,13 @@ fn draw_section(rect: &Rect, label: &str) {
     );
 }
 
-fn draw_controllers_panel(panel_state: &mut PanelState, layout: &PanelLayout) {
+fn draw_controllers_panel(
+    panel_state: &mut PanelState,
+    knob_drag: &mut KnobDragState,
+    layout: &PanelLayout,
+) {
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::ControllersTune,
         layout.controller_knobs[0],
         &mut panel_state.controllers.tune,
@@ -591,7 +607,7 @@ fn draw_controllers_panel(panel_state: &mut PanelState, layout: &PanelLayout) {
         None,
     );
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::ControllersGlide,
         layout.controller_knobs[1],
         &mut panel_state.controllers.glide,
@@ -599,7 +615,7 @@ fn draw_controllers_panel(panel_state: &mut PanelState, layout: &PanelLayout) {
         None,
     );
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::ControllersModMix,
         layout.controller_knobs[2],
         &mut panel_state.controllers.modulation_mix,
@@ -648,9 +664,13 @@ fn draw_text_block(x: f32, mut y: f32, text: &str) {
     }
 }
 
-fn draw_oscillators(panel_state: &mut PanelState, layout: &PanelLayout) {
+fn draw_oscillators(
+    panel_state: &mut PanelState,
+    knob_drag: &mut KnobDragState,
+    layout: &PanelLayout,
+) {
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::OscRange,
         layout.osc_range_knob,
         &mut panel_state.oscillator.range,
@@ -664,7 +684,7 @@ fn draw_oscillators(panel_state: &mut PanelState, layout: &PanelLayout) {
         let freq_label = format!("OSC {} FREQ", index + 1);
         let detune_label = format!("{:+.2} OCT", detune);
         draw_knob_widget(
-            panel_state,
+            knob_drag,
             match index {
                 0 => KnobId::OscFreq1,
                 1 => KnobId::OscFreq2,
@@ -678,7 +698,7 @@ fn draw_oscillators(panel_state: &mut PanelState, layout: &PanelLayout) {
         let waveform = value_to_waveform(panel_state.oscillator.waveform[index].value);
         let wave_label = format!("OSC {} WAVE", index + 1);
         draw_knob_widget(
-            panel_state,
+            knob_drag,
             match index {
                 0 => KnobId::OscWave1,
                 1 => KnobId::OscWave2,
@@ -692,10 +712,14 @@ fn draw_oscillators(panel_state: &mut PanelState, layout: &PanelLayout) {
     }
 }
 
-fn draw_mixer(panel_state: &mut PanelState, layout: &PanelLayout) {
+fn draw_mixer(
+    panel_state: &mut PanelState,
+    knob_drag: &mut KnobDragState,
+    layout: &PanelLayout,
+) {
     let external = format!("{:.0}%", panel_state.mixer_panel.external_input.value * 100.0);
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::MixerExternal,
         layout.mixer_knobs[0],
         &mut panel_state.mixer_panel.external_input,
@@ -704,7 +728,7 @@ fn draw_mixer(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
     let osc1 = format!("{:.0}%", panel_state.mixer_panel.osc[0].value * 100.0);
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::MixerOsc1,
         layout.mixer_knobs[1],
         &mut panel_state.mixer_panel.osc[0],
@@ -713,7 +737,7 @@ fn draw_mixer(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
     let osc2 = format!("{:.0}%", panel_state.mixer_panel.osc[1].value * 100.0);
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::MixerOsc2,
         layout.mixer_knobs[2],
         &mut panel_state.mixer_panel.osc[1],
@@ -722,7 +746,7 @@ fn draw_mixer(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
     let osc3 = format!("{:.0}%", panel_state.mixer_panel.osc[2].value * 100.0);
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::MixerOsc3,
         layout.mixer_knobs[3],
         &mut panel_state.mixer_panel.osc[2],
@@ -731,7 +755,7 @@ fn draw_mixer(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
     let noise = format!("{:.0}%", panel_state.mixer_panel.noise.value * 100.0);
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::MixerNoise,
         layout.mixer_knobs[4],
         &mut panel_state.mixer_panel.noise,
@@ -740,10 +764,14 @@ fn draw_mixer(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
 }
 
-fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
+fn draw_modifiers(
+    panel_state: &mut PanelState,
+    knob_drag: &mut KnobDragState,
+    layout: &PanelLayout,
+) {
     let cutoff_text = format!("{:.0} Hz", panel_state.cutoff_hz());
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::FilterCutoff,
         layout.filter_knobs[0],
         &mut panel_state.modifiers_panel.filter[0],
@@ -751,7 +779,7 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
         Some(&cutoff_text),
     );
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::FilterEmphasis,
         layout.filter_knobs[1],
         &mut panel_state.modifiers_panel.filter[1],
@@ -759,7 +787,7 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
         None,
     );
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::FilterContour,
         layout.filter_knobs[2],
         &mut panel_state.modifiers_panel.filter[2],
@@ -768,7 +796,7 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
 
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::FilterAttack,
         layout.filter_env_knobs[0],
         &mut panel_state.modifiers_panel.filter_env[0],
@@ -776,7 +804,7 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
         None,
     );
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::FilterDecay,
         layout.filter_env_knobs[1],
         &mut panel_state.modifiers_panel.filter_env[1],
@@ -784,7 +812,7 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
         None,
     );
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::FilterSustain,
         layout.filter_env_knobs[2],
         &mut panel_state.modifiers_panel.filter_env[2],
@@ -793,7 +821,7 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
 
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::LoudnessAttack,
         layout.loudness_knobs[0],
         &mut panel_state.modifiers_panel.loudness_env[0],
@@ -801,7 +829,7 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
         None,
     );
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::LoudnessDecay,
         layout.loudness_knobs[1],
         &mut panel_state.modifiers_panel.loudness_env[1],
@@ -809,7 +837,7 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
         None,
     );
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::LoudnessSustain,
         layout.loudness_knobs[2],
         &mut panel_state.modifiers_panel.loudness_env[2],
@@ -818,10 +846,14 @@ fn draw_modifiers(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
 }
 
-fn draw_output_panel(panel_state: &mut PanelState, layout: &PanelLayout) {
+fn draw_output_panel(
+    panel_state: &mut PanelState,
+    knob_drag: &mut KnobDragState,
+    layout: &PanelLayout,
+) {
     let master = format!("{:.0}%", panel_state.master_level() * 100.0);
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::OutputVolume,
         layout.output_knobs[0],
         &mut panel_state.output_panel.main_volume,
@@ -830,7 +862,7 @@ fn draw_output_panel(panel_state: &mut PanelState, layout: &PanelLayout) {
     );
     let phones = format!("{:.0}%", panel_state.output_panel.phones_volume.value * 100.0);
     draw_knob_widget(
-        panel_state,
+        knob_drag,
         KnobId::OutputPhones,
         layout.output_knobs[1],
         &mut panel_state.output_panel.phones_volume,
@@ -840,14 +872,14 @@ fn draw_output_panel(panel_state: &mut PanelState, layout: &PanelLayout) {
 }
 
 fn draw_knob_widget(
-    panel_state: &mut PanelState,
+    knob_drag: &mut KnobDragState,
     knob_id: KnobId,
     rect: Rect,
     knob: &mut KnobValue,
     label: &str,
     display: Option<&str>,
 ) {
-    handle_knob_drag(panel_state, knob_id, rect, knob);
+    handle_knob_drag(knob_drag, knob_id, rect, knob);
     let center = vec2(rect.x + rect.w * 0.5, rect.y + rect.h * 0.5);
     let radius = rect.w.min(rect.h) * 0.35;
     draw_circle(
@@ -889,30 +921,25 @@ fn draw_knob_widget(
     );
 }
 
-fn handle_knob_drag(
-    panel_state: &mut PanelState,
-    knob_id: KnobId,
-    rect: Rect,
-    knob: &mut KnobValue,
-) {
+fn handle_knob_drag(knob_drag: &mut KnobDragState, knob_id: KnobId, rect: Rect, knob: &mut KnobValue) {
     let mouse = mouse_position_vec();
     if is_mouse_button_pressed(MouseButton::Left) && rect.contains(mouse) {
-        panel_state.active_knob = Some(knob_id);
-        panel_state.knob_origin_value = knob.value;
-        panel_state.knob_origin_y = mouse.y;
+        knob_drag.active_knob = Some(knob_id);
+        knob_drag.origin_value = knob.value;
+        knob_drag.origin_y = mouse.y;
     }
-    if let Some(active) = panel_state.active_knob {
+    if let Some(active) = knob_drag.active_knob {
         if active == knob_id {
             if is_mouse_button_down(MouseButton::Left) {
-                let delta = (panel_state.knob_origin_y - mouse.y) * 0.005;
-                knob.value = (panel_state.knob_origin_value + delta).clamp(0.0, 1.0);
+                let delta = (knob_drag.origin_y - mouse.y) * 0.005;
+                knob.value = (knob_drag.origin_value + delta).clamp(0.0, 1.0);
             } else {
-                panel_state.active_knob = None;
+                knob_drag.active_knob = None;
             }
         }
     }
-    if is_mouse_button_released(MouseButton::Left) && panel_state.active_knob == Some(knob_id) {
-        panel_state.active_knob = None;
+    if is_mouse_button_released(MouseButton::Left) && knob_drag.active_knob == Some(knob_id) {
+        knob_drag.active_knob = None;
     }
     let (_x, wheel) = mouse_wheel();
     if rect.contains(mouse) && wheel.abs() > f32::EPSILON {
@@ -921,30 +948,32 @@ fn handle_knob_drag(
 }
 
 fn draw_keyboard(controller: &KeyboardController) {
-    let base_rect = Rect::new(40.0, PANEL_HEIGHT + 60.0, SCREEN_WIDTH - 80.0, SCREEN_HEIGHT - PANEL_HEIGHT - 100.0);
-    draw_rectangle(base_rect.x, base_rect.y, base_rect.w, base_rect.h, Color::new(0.01, 0.01, 0.01, 0.9));
-    draw_rectangle_lines(base_rect.x, base_rect.y, base_rect.w, base_rect.h, 1.0, AMBER);
-    let white_width = base_rect.w / controller.white_keys().len() as f32;
-    let white_size = vec2(white_width - 10.0, base_rect.h - 20.0);
+    let area = Rect::new(
+        40.0,
+        PANEL_HEIGHT + 40.0,
+        SCREEN_WIDTH - 80.0,
+        SCREEN_HEIGHT - PANEL_HEIGHT - 80.0,
+    );
+    let spacing = 18.0;
+    let white_count = controller.white_keys().len() as f32;
+    let max_size_width = (area.w - spacing * (white_count - 1.0)) / white_count;
+    let max_size_height = (area.h - spacing * 3.0) / 2.0;
+    let key_size = max_size_width.min(max_size_height).max(40.0);
+    let total_width = white_count * key_size + (white_count - 1.0) * spacing;
+    let start_x = area.x + (area.w - total_width) * 0.5;
+    let white_y = area.y + area.h - key_size;
+    let black_y = white_y - key_size - spacing * 0.7;
+
     for (index, binding) in controller.white_keys().iter().enumerate() {
-        let rect = Rect::new(
-            base_rect.x + index as f32 * white_width + 5.0,
-            base_rect.y + base_rect.h - white_size.y - 5.0,
-            white_size.x,
-            white_size.y,
-        );
+        let x = start_x + index as f32 * (key_size + spacing);
+        let rect = Rect::new(x, white_y, key_size, key_size);
         let active = controller.is_pressed(binding.keycode);
         draw_key(rect, active, false, binding.label);
     }
-    let black_size = vec2(white_width * 0.8, (base_rect.h - 30.0) * 0.55);
+
     for binding in controller.black_keys() {
-        let x = base_rect.x + binding.position_hint * base_rect.w - black_size.x * 0.5;
-        let rect = Rect::new(
-            x,
-            base_rect.y + 10.0,
-            black_size.x,
-            black_size.y,
-        );
+        let center = start_x + binding.position_hint * (key_size + spacing) + key_size * 0.5;
+        let rect = Rect::new(center - key_size * 0.5, black_y, key_size, key_size);
         let active = controller.is_pressed(binding.keycode);
         draw_key(rect, active, true, binding.label);
     }
@@ -958,9 +987,9 @@ fn draw_key(rect: Rect, active: bool, filled: bool, label: &str) {
     } else {
         Color::new(0.02, 0.02, 0.02, 0.95)
     };
-    draw_rounded_rect(rect, 6.0, fill_color);
-    draw_rounded_rect_lines(rect, 6.0, AMBER);
-    draw_centered_text(label, rect, 22);
+    draw_rounded_rect(rect, 10.0, fill_color);
+    draw_rounded_rect_lines(rect, 10.0, AMBER);
+    draw_centered_text(label, rect, KEY_FONT_SIZE);
 }
 
 fn draw_rounded_rect(rect: Rect, radius: f32, color: Color) {
@@ -978,24 +1007,43 @@ fn draw_rounded_rect(rect: Rect, radius: f32, color: Color) {
 }
 
 fn draw_rounded_rect_lines(rect: Rect, radius: f32, color: Color) {
-    draw_line(rect.x + radius, rect.y, rect.x + rect.w - radius, rect.y, 1.0, color);
-    draw_line(
-        rect.x + radius,
-        rect.y + rect.h,
-        rect.x + rect.w - radius,
-        rect.y + rect.h,
-        1.0,
-        color,
-    );
-    draw_line(rect.x, rect.y + radius, rect.x, rect.y + rect.h - radius, 1.0, color);
-    draw_line(
-        rect.x + rect.w,
-        rect.y + radius,
-        rect.x + rect.w,
-        rect.y + rect.h - radius,
-        1.0,
-        color,
-    );
+    let top = rect.y;
+    let bottom = rect.y + rect.h;
+    let left = rect.x;
+    let right = rect.x + rect.w;
+    let left_x = left + radius;
+    let right_x = right - radius;
+    let top_y = top + radius;
+    let bottom_y = bottom - radius;
+
+    draw_line(left_x, top, right_x, top, 1.0, color);
+    draw_line(left_x, bottom, right_x, bottom, 1.0, color);
+    draw_line(left, top_y, left, bottom_y, 1.0, color);
+    draw_line(right, top_y, right, bottom_y, 1.0, color);
+
+    draw_corner_arc(vec2(left_x, top_y), std::f32::consts::PI, 1.5 * std::f32::consts::PI, radius, color);
+    draw_corner_arc(vec2(right_x, top_y), 1.5 * std::f32::consts::PI, 0.0, radius, color);
+    draw_corner_arc(vec2(right_x, bottom_y), 0.0, 0.5 * std::f32::consts::PI, radius, color);
+    draw_corner_arc(vec2(left_x, bottom_y), 0.5 * std::f32::consts::PI, std::f32::consts::PI, radius, color);
+}
+
+fn draw_corner_arc(center: Vec2, start: f32, end: f32, radius: f32, color: Color) {
+    let tau = std::f32::consts::TAU;
+    let normalized_start = start.rem_euclid(tau);
+    let normalized_end = end.rem_euclid(tau);
+    let mut sweep = normalized_end - normalized_start;
+    if sweep <= 0.0 {
+        sweep += tau;
+    }
+    let steps = 10;
+    let mut prev = center + vec2(normalized_start.cos() * radius, normalized_start.sin() * radius);
+    for idx in 1..=steps {
+        let angle = normalized_start + sweep * (idx as f32 / steps as f32);
+        let norm_angle = angle.rem_euclid(tau);
+        let next = center + vec2(norm_angle.cos() * radius, norm_angle.sin() * radius);
+        draw_line(prev.x, prev.y, next.x, next.y, 1.0, color);
+        prev = next;
+    }
 }
 
 fn draw_centered_text(text: &str, rect: Rect, size: u16) {
@@ -1051,18 +1099,18 @@ fn draw_debug_window(state: &DebugWindowState, waveform: &[f32], spectrum: &[f32
     draw_rectangle_lines(rect.x + rect.w - 32.0, rect.y + 8.0, 24.0, 24.0, 1.0, AMBER);
     draw_centered_text("X", Rect::new(rect.x + rect.w - 32.0, rect.y + 8.0, 24.0, 24.0), 20);
 
-    let scope_rect = Rect::new(rect.x + 16.0, rect.y + 52.0, rect.w - 32.0, 150.0);
+    let scope_rect = Rect::new(rect.x + 16.0, rect.y + 52.0, rect.w - 32.0, 110.0);
     draw_rectangle_lines(scope_rect.x, scope_rect.y, scope_rect.w, scope_rect.h, 1.0, AMBER);
     draw_waveform(scope_rect, waveform);
 
     let freq_rect = Rect::new(
         rect.x + 16.0,
-        scope_rect.y + scope_rect.h + 20.0,
+        scope_rect.y + scope_rect.h + 24.0,
         rect.w - 32.0,
-        rect.h - scope_rect.h - 76.0,
+        rect.h - scope_rect.h - 90.0,
     );
     draw_rectangle_lines(freq_rect.x, freq_rect.y, freq_rect.w, freq_rect.h, 1.0, AMBER);
-    draw_frequency(freq_rect, spectrum);
+    draw_frequency(freq_rect, spectrum, state.sample_rate);
 }
 
 fn draw_waveform(rect: Rect, samples: &[f32]) {
@@ -1078,24 +1126,79 @@ fn draw_waveform(rect: Rect, samples: &[f32]) {
     }
 }
 
-fn draw_frequency(rect: Rect, spectrum: &[f32]) {
+fn draw_frequency(rect: Rect, spectrum: &[f32], sample_rate: f32) {
     if spectrum.is_empty() {
         return;
     }
-    let bins = spectrum.len().min(128);
-    for i in 0..bins {
-        let value = spectrum[i];
-        let x = rect.x + i as f32 / bins as f32 * rect.w;
-        let height = value.min(1.0) * rect.h;
-        draw_line(
-            x,
-            rect.y + rect.h,
-            x,
-            rect.y + rect.h - height,
-            2.0,
-            AMBER_DIM,
+    let nyquist = sample_rate * 0.5;
+    let max_freq = MAX_ANALYZER_FREQ.min(nyquist);
+    let freq_ratio = max_freq / nyquist;
+    let usable_bins = ((spectrum.len() as f32) * freq_ratio).max(1.0) as usize;
+    let mut prev = None;
+    for i in 0..usable_bins {
+        let freq = nyquist * (i as f32 / spectrum.len() as f32);
+        if freq > MAX_ANALYZER_FREQ {
+            break;
+        }
+        let x = rect.x + (freq / MAX_ANALYZER_FREQ) * rect.w;
+        let magnitude = spectrum[i].max(1e-6);
+        let db = 20.0 * magnitude.log10();
+        let normalized = ((db - MIN_ANALYZER_DB) / (MAX_ANALYZER_DB - MIN_ANALYZER_DB)).clamp(0.0, 1.0);
+        let y = rect.y + rect.h - normalized * rect.h;
+        if let Some((px, py)) = prev {
+            draw_line(px, py, x, y, 2.0, AMBER_DIM);
+        }
+        prev = Some((x, y));
+    }
+
+    // axis lines
+    let zero = (0.0 - MIN_ANALYZER_DB) / (MAX_ANALYZER_DB - MIN_ANALYZER_DB);
+    let zero_y = rect.y + rect.h - zero * rect.h;
+    draw_line(rect.x, zero_y, rect.x + rect.w, zero_y, 1.0, AMBER_DIM);
+
+    for db in [MIN_ANALYZER_DB, 0.0, MAX_ANALYZER_DB] {
+        let ratio = (db - MIN_ANALYZER_DB) / (MAX_ANALYZER_DB - MIN_ANALYZER_DB);
+        let y = rect.y + rect.h - ratio * rect.h;
+        draw_line(rect.x, y, rect.x + rect.w, y, 0.5, Color::new(0.2, 0.1, 0.03, 0.4));
+        draw_text_ex(
+            &format!("{db:.0} dB"),
+            rect.x - 60.0,
+            y + 4.0,
+            TextParams {
+                font_size: 14,
+                color: AMBER,
+                ..Default::default()
+            },
         );
     }
+
+    let freq_labels = [0.0, 5_000.0, 10_000.0, 15_000.0, 20_000.0, 25_000.0];
+    for freq in freq_labels {
+        let ratio = (freq / MAX_ANALYZER_FREQ).clamp(0.0, 1.0);
+        let x = rect.x + ratio * rect.w;
+        draw_line(x, rect.y, x, rect.y + rect.h, 0.3, Color::new(0.2, 0.1, 0.03, 0.3));
+        draw_text_ex(
+            &format!("{:.0}k", freq / 1000.0),
+            x - 12.0,
+            rect.y + rect.h + 16.0,
+            TextParams {
+                font_size: 14,
+                color: AMBER,
+                ..Default::default()
+            },
+        );
+    }
+
+    draw_text_ex(
+        "FREQUENCY (kHz)",
+        rect.x + rect.w * 0.5 - 70.0,
+        rect.y + rect.h + 34.0,
+        TextParams {
+            font_size: 16,
+            color: AMBER,
+            ..Default::default()
+        },
+    );
 }
 
 fn value_to_waveform(value: f32) -> Waveform {

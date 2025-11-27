@@ -51,6 +51,10 @@ impl SynthPipeline {
         self.modifiers.set_cutoff(hz);
     }
 
+    pub fn sample_rate(&self) -> f32 {
+        self.sample_rate
+    }
+
     pub fn next_sample(&mut self) -> f32 {
         self.bank
             .fill_sample(self.sample_rate, &mut self.voice_buffer);
