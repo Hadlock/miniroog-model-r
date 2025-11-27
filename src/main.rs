@@ -58,7 +58,6 @@ const WAVEFORMS: [Waveform; 4] = [
     Waveform::Triangle,
     Waveform::Sine,
 ];
-const NOISE_COLOR_COUNT: usize = NoiseColor::COUNT;
 
 #[macroquad::main(window_conf)]
 async fn main() {
@@ -106,7 +105,7 @@ async fn main() {
             is_mouse_button_released(MouseButton::Left),
         );
         if is_key_pressed(KeyCode::Tab) {
-            panel_state.mod_noise_color = panel_state.mod_noise_color.next();
+            panel_state.cycle_noise_color();
         }
         if let Some(message) = controller.poll(mouse_changed) {
             panel_state.last_midi = message.midi_note;
@@ -179,7 +178,7 @@ struct PanelLayout {
     mixer_osc_knobs: [Rect; 3],
     mixer_extra_knobs: [Rect; 2],
     mixer_toggle_rects: [Rect; 5],
-    noise_selector_rects: [Rect; NOISE_COLOR_COUNT],
+    noise_selector_rect: Rect,
     overload_rect: Rect,
     filter_knobs: [Rect; 3],
     filter_env_knobs: [Rect; 3],
@@ -276,7 +275,7 @@ fn compute_panel_layout() -> PanelLayout {
     let mut mixer_osc_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 3];
     let mut mixer_extra_knobs = [Rect::new(0.0, 0.0, 0.0, 0.0); 2];
     let mut mixer_toggle_rects = [Rect::new(0.0, 0.0, 0.0, 0.0); 5];
-    let mut noise_selector_rects = [Rect::new(0.0, 0.0, 0.0, 0.0); NOISE_COLOR_COUNT];
+    let noise_selector_rect;
     let row_spacing = knob_size + 25.0;
     let osc_x = mixer_rect.x + 20.0;
     let extra_x = mixer_rect.x + mixer_rect.w * 0.55;
@@ -302,20 +301,10 @@ fn compute_panel_layout() -> PanelLayout {
             toggle_size.y,
         );
     }
-    let noise_button = vec2(64.0, 24.0);
-    let noise_per_row = 3;
-    let noise_start_x = mixer_extra_knobs[1].x;
+    let noise_button = vec2(100.0, 32.0);
+    let noise_start_x = mixer_rect.x + mixer_rect.w * 0.58;
     let noise_start_y = mixer_extra_knobs[1].y + knob_size + 36.0;
-    for index in 0..NOISE_COLOR_COUNT {
-        let row = index / noise_per_row;
-        let col = index % noise_per_row;
-        noise_selector_rects[index] = Rect::new(
-            noise_start_x + col as f32 * (noise_button.x + 10.0),
-            noise_start_y + row as f32 * (noise_button.y + 8.0),
-            noise_button.x,
-            noise_button.y,
-        );
-    }
+    noise_selector_rect = Rect::new(noise_start_x, noise_start_y, noise_button.x, noise_button.y);
     let overload_rect = Rect::new(
         mixer_extra_knobs[0].x + knob_size * 0.5 - 12.0,
         mixer_rect.y + 2.0,
@@ -367,7 +356,7 @@ fn compute_panel_layout() -> PanelLayout {
         mixer_osc_knobs,
         mixer_extra_knobs,
         mixer_toggle_rects,
-        noise_selector_rects,
+        noise_selector_rect,
         overload_rect,
         filter_knobs,
         filter_env_knobs,
@@ -410,6 +399,16 @@ impl PanelState {
             mod_noise_color: NoiseColor::White,
             mod_noise: NoiseGenerator::new(),
         }
+    }
+
+    fn set_noise_color(&mut self, color: NoiseColor) {
+        self.mod_noise_color = color;
+        self.mixer_panel.noise_color = color;
+    }
+
+    fn cycle_noise_color(&mut self) {
+        let next = self.mod_noise_color.next();
+        self.set_noise_color(next);
     }
 
     fn oscillator_mix_levels(&self) -> [f32; 3] {
@@ -729,12 +728,8 @@ fn handle_mixer_switches(panel_state: &mut PanelState, layout: &PanelLayout) {
             }
         }
     }
-    for (index, rect) in layout.noise_selector_rects.iter().enumerate() {
-        if rect.contains(mouse) {
-            if let Some(color) = NoiseColor::VALUES.get(index).copied() {
-                panel_state.mixer_panel.noise_color = color;
-            }
-        }
+    if layout.noise_selector_rect.contains(mouse) {
+        panel_state.cycle_noise_color();
     }
 }
 
@@ -998,7 +993,7 @@ fn draw_mixer(panel_state: &mut PanelState, knob_drag: &mut KnobDragState, layou
         draw_toggle_switch(layout.mixer_toggle_rects[toggle_index], enabled, "ON");
     }
     draw_noise_selector(
-        &layout.noise_selector_rects,
+        layout.noise_selector_rect,
         panel_state.mixer_panel.noise_color,
     );
     let overload_active = panel_state.oscillator_mix_levels().iter().sum::<f32>() > 2.5;
@@ -1061,36 +1056,23 @@ fn draw_toggle_switch(rect: Rect, on: bool, label: &str) {
     );
 }
 
-fn draw_noise_selector(rects: &[Rect; NOISE_COLOR_COUNT], selection: NoiseColor) {
-    for (index, rect) in rects.iter().enumerate() {
-        let color = NoiseColor::VALUES
-            .get(index)
-            .copied()
-            .unwrap_or(NoiseColor::White);
-        let active = selection == color;
-        let fill = if active {
-            AMBER
-        } else {
-            Color::new(0.08, 0.05, 0.03, 1.0)
-        };
-        draw_rectangle(rect.x, rect.y, rect.w, rect.h, fill);
-        draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
-        draw_text_ex(
-            color.label(),
-            rect.x + 4.0,
-            rect.y + rect.h - 6.0,
-            TextParams {
-                font_size: 12,
-                color: if active { BACKGROUND } else { AMBER },
-                ..Default::default()
-            },
-        );
-    }
-
+fn draw_noise_selector(rect: Rect, selection: NoiseColor) {
+    draw_rectangle(
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        Color::new(0.08, 0.05, 0.03, 1.0),
+    );
+    draw_rectangle_lines(rect.x, rect.y, rect.w, rect.h, 1.0, AMBER);
+    let label_rect = Rect::new(rect.x, rect.y + 1.0, rect.w, 18.0);
+    draw_centered_text("NOISE", label_rect, 16);
+    let color_rect = Rect::new(rect.x, rect.y + rect.h - 22.0, rect.w, 18.0);
+    draw_centered_text(selection.label(), color_rect, 16);
     draw_text_ex(
-        "NOISE COLOR",
-        rects[0].x,
-        rects[0].y - 6.0,
+        "CLICK / TAB TO CYCLE",
+        rect.x,
+        rect.y - 8.0,
         TextParams {
             font_size: 12,
             color: AMBER_DIM,
