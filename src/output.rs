@@ -76,6 +76,22 @@ impl SynthPipeline {
         self.modifiers.set_cutoff(hz);
     }
 
+    pub fn set_filter_emphasis(&mut self, value: f32) {
+        self.modifiers.set_emphasis(value);
+    }
+
+    pub fn set_filter_contour(&mut self, value: f32) {
+        self.modifiers.set_contour_amount(value);
+    }
+
+    pub fn set_filter_envelope(&mut self, attack: f32, decay: f32, sustain: f32) {
+        self.modifiers.set_filter_envelope(attack, decay, sustain);
+    }
+
+    pub fn set_loudness_envelope(&mut self, attack: f32, decay: f32, sustain: f32) {
+        self.modifiers.set_loudness_envelope(attack, decay, sustain);
+    }
+
     pub fn sample_rate(&self) -> f32 {
         self.sample_rate
     }

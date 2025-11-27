@@ -622,18 +622,18 @@ impl ModifierKnobs {
         Self {
             filter: [
                 KnobValue::implemented((2200.0 - FILTER_MIN_HZ) / (FILTER_MAX_HZ - FILTER_MIN_HZ)),
-                KnobValue::stub(0.4),
-                KnobValue::stub(0.5),
+                KnobValue::implemented(0.4),
+                KnobValue::implemented(0.5),
             ],
             filter_env: [
-                KnobValue::stub(0.2),
-                KnobValue::stub(0.5),
-                KnobValue::stub(0.5),
+                KnobValue::implemented(0.2),
+                KnobValue::implemented(0.5),
+                KnobValue::implemented(0.5),
             ],
             loudness_env: [
-                KnobValue::stub(0.2),
-                KnobValue::stub(0.5),
-                KnobValue::stub(0.5),
+                KnobValue::implemented(0.2),
+                KnobValue::implemented(0.5),
+                KnobValue::implemented(0.5),
             ],
         }
     }
@@ -1152,7 +1152,7 @@ fn draw_modifiers(
         KnobId::FilterCutoff,
         layout.filter_knobs[0],
         &mut panel_state.modifiers_panel.filter[0],
-        "CUTOFF",
+        "CUTOFF FRQ",
         Some(&cutoff_text),
     );
     draw_knob_widget(
@@ -1168,7 +1168,7 @@ fn draw_modifiers(
         KnobId::FilterContour,
         layout.filter_knobs[2],
         &mut panel_state.modifiers_panel.filter[2],
-        "AMT CONTOUR",
+        "AMOUNT CONTOUR",
         None,
     );
 
@@ -1177,7 +1177,7 @@ fn draw_modifiers(
         KnobId::FilterAttack,
         layout.filter_env_knobs[0],
         &mut panel_state.modifiers_panel.filter_env[0],
-        "ATTACK",
+        "ATTACK TIME",
         None,
     );
     draw_knob_widget(
@@ -1185,7 +1185,7 @@ fn draw_modifiers(
         KnobId::FilterDecay,
         layout.filter_env_knobs[1],
         &mut panel_state.modifiers_panel.filter_env[1],
-        "DECAY",
+        "DECAY TIME",
         None,
     );
     draw_knob_widget(
@@ -1193,7 +1193,7 @@ fn draw_modifiers(
         KnobId::FilterSustain,
         layout.filter_env_knobs[2],
         &mut panel_state.modifiers_panel.filter_env[2],
-        "SUSTAIN",
+        "SUSTAIN LVL",
         None,
     );
 
@@ -1774,20 +1774,27 @@ fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline:
         synth.set_noise_color(panel_state.mixer_panel.noise_color);
         synth.set_master_level(panel_state.master_level());
         synth.set_cutoff(panel_state.cutoff_hz());
+        synth.set_filter_emphasis(panel_state.modifiers_panel.filter[1].value);
+        synth.set_filter_contour(panel_state.modifiers_panel.filter[2].value);
+        synth.set_filter_envelope(
+            panel_state.modifiers_panel.filter_env[0].value,
+            panel_state.modifiers_panel.filter_env[1].value,
+            panel_state.modifiers_panel.filter_env[2].value,
+        );
+        synth.set_loudness_envelope(
+            panel_state.modifiers_panel.loudness_env[0].value,
+            panel_state.modifiers_panel.loudness_env[1].value,
+            panel_state.modifiers_panel.loudness_env[2].value,
+        );
     }
 }
 
 fn feed_stub_knobs(panel_state: &PanelState) {
     stub_external_input_volume(panel_state.mixer_panel.external_input.value);
     stub_mixer_external_toggle(panel_state.mixer_panel.ext_enabled);
-    stub_filter_emphasis(panel_state.modifiers_panel.filter[1].value);
-    stub_filter_contour_amount(panel_state.modifiers_panel.filter[2].value);
     stub_filter_attack(panel_state.modifiers_panel.filter_env[0].value);
     stub_filter_decay(panel_state.modifiers_panel.filter_env[1].value);
     stub_filter_sustain(panel_state.modifiers_panel.filter_env[2].value);
-    stub_loudness_attack(panel_state.modifiers_panel.loudness_env[0].value);
-    stub_loudness_decay(panel_state.modifiers_panel.loudness_env[1].value);
-    stub_loudness_sustain(panel_state.modifiers_panel.loudness_env[2].value);
     stub_phones_volume(panel_state.output_panel.phones_volume.value);
 }
 
@@ -1797,14 +1804,6 @@ fn stub_external_input_volume(_value: f32) {
 
 fn stub_mixer_external_toggle(_on: bool) {
     // TODO: Implement external input enable switch.
-}
-
-fn stub_filter_emphasis(_value: f32) {
-    // TODO: Apply resonance to the filter core.
-}
-
-fn stub_filter_contour_amount(_value: f32) {
-    // TODO: Apply contour envelope modulation depth.
 }
 
 fn stub_filter_attack(_value: f32) {
@@ -1817,18 +1816,6 @@ fn stub_filter_decay(_value: f32) {
 
 fn stub_filter_sustain(_value: f32) {
     // TODO: Tie filter sustain knob into envelope sustain.
-}
-
-fn stub_loudness_attack(_value: f32) {
-    // TODO: Extend loudness contour attack handling.
-}
-
-fn stub_loudness_decay(_value: f32) {
-    // TODO: Extend loudness contour decay handling.
-}
-
-fn stub_loudness_sustain(_value: f32) {
-    // TODO: Extend loudness contour sustain handling.
 }
 
 fn stub_phones_volume(_value: f32) {
