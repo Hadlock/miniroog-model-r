@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 
 use controllers::KeyboardController;
 use macroquad::{prelude::*, text::measure_text};
-use modifiers::compute_spectrum;
+use modifiers::{compute_spectrum, knob_to_env_time};
 use noise::{NoiseColor, NoiseGenerator};
 use oscillatorbank::OscillatorBank;
 use output::{AudioEngine, DebugData, SharedPipeline, SynthPipeline};
@@ -52,6 +52,14 @@ const BACKGROUND: Color = Color {
 const DETUNE_RANGE: f32 = 0.5;
 const FILTER_MIN_HZ: f32 = 200.0;
 const FILTER_MAX_HZ: f32 = 5_000.0;
+const FILTER_ATTACK_MIN: f32 = 0.0015;
+const FILTER_ATTACK_MAX: f32 = 3.0;
+const FILTER_DECAY_MIN: f32 = 0.005;
+const FILTER_DECAY_MAX: f32 = 4.0;
+const LOUD_ATTACK_MIN: f32 = 0.001;
+const LOUD_ATTACK_MAX: f32 = 4.5;
+const LOUD_DECAY_MIN: f32 = 0.01;
+const LOUD_DECAY_MAX: f32 = 6.0;
 const WAVEFORMS: [Waveform; 4] = [
     Waveform::Saw,
     Waveform::Pulse,
@@ -1200,54 +1208,80 @@ fn draw_modifiers(
         None,
     );
 
+    let filter_attack = knob_to_env_time(
+        panel_state.modifiers_panel.filter_env[0].value,
+        FILTER_ATTACK_MIN,
+        FILTER_ATTACK_MAX,
+    );
+    let filter_attack_label = format_env_time(filter_attack);
     draw_knob_widget(
         knob_drag,
         KnobId::FilterAttack,
         layout.filter_env_knobs[0],
         &mut panel_state.modifiers_panel.filter_env[0],
         "ATTACK TIME",
-        None,
+        Some(&filter_attack_label),
     );
+    let filter_decay = knob_to_env_time(
+        panel_state.modifiers_panel.filter_env[1].value,
+        FILTER_DECAY_MIN,
+        FILTER_DECAY_MAX,
+    );
+    let filter_decay_label = format_env_time(filter_decay);
     draw_knob_widget(
         knob_drag,
         KnobId::FilterDecay,
         layout.filter_env_knobs[1],
         &mut panel_state.modifiers_panel.filter_env[1],
         "DECAY TIME",
-        None,
+        Some(&filter_decay_label),
     );
+    let filter_sustain_label = format_percent(panel_state.modifiers_panel.filter_env[2].value);
     draw_knob_widget(
         knob_drag,
         KnobId::FilterSustain,
         layout.filter_env_knobs[2],
         &mut panel_state.modifiers_panel.filter_env[2],
         "SUSTAIN LVL",
-        None,
+        Some(&filter_sustain_label),
     );
 
+    let loud_attack = knob_to_env_time(
+        panel_state.modifiers_panel.loudness_env[0].value,
+        LOUD_ATTACK_MIN,
+        LOUD_ATTACK_MAX,
+    );
+    let loud_attack_label = format_env_time(loud_attack);
     draw_knob_widget(
         knob_drag,
         KnobId::LoudnessAttack,
         layout.loudness_knobs[0],
         &mut panel_state.modifiers_panel.loudness_env[0],
         "LOUD ATTACK",
-        None,
+        Some(&loud_attack_label),
     );
+    let loud_decay = knob_to_env_time(
+        panel_state.modifiers_panel.loudness_env[1].value,
+        LOUD_DECAY_MIN,
+        LOUD_DECAY_MAX,
+    );
+    let loud_decay_label = format_env_time(loud_decay);
     draw_knob_widget(
         knob_drag,
         KnobId::LoudnessDecay,
         layout.loudness_knobs[1],
         &mut panel_state.modifiers_panel.loudness_env[1],
         "LOUD DECAY",
-        None,
+        Some(&loud_decay_label),
     );
+    let loud_sustain_label = format_percent(panel_state.modifiers_panel.loudness_env[2].value);
     draw_knob_widget(
         knob_drag,
         KnobId::LoudnessSustain,
         layout.loudness_knobs[2],
         &mut panel_state.modifiers_panel.loudness_env[2],
         "LOUD SUSTAIN",
-        None,
+        Some(&loud_sustain_label),
     );
 }
 
@@ -1779,6 +1813,22 @@ fn waveform_to_value(waveform: Waveform) -> f32 {
     } else {
         0.5
     }
+}
+
+fn format_env_time(seconds: f32) -> String {
+    if seconds < 0.01 {
+        format!("{:.1} ms", seconds * 1_000.0)
+    } else if seconds < 0.1 {
+        format!("{:.2} s", seconds)
+    } else if seconds < 1.0 {
+        format!("{:.2} s", seconds)
+    } else {
+        format!("{:.1} s", seconds)
+    }
+}
+
+fn format_percent(value: f32) -> String {
+    format!("{:.0}%", (value * 100.0).clamp(0.0, 100.0))
 }
 
 fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline: &SharedPipeline) {

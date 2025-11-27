@@ -58,19 +58,19 @@ impl Modifiers {
 
     pub fn set_filter_envelope(&mut self, attack: f32, decay: f32, sustain: f32) {
         self.filter_params = EnvelopeParams {
-            attack: map_env_time(attack, 0.0015, 3.0),
-            decay: map_env_time(decay, 0.005, 4.0),
+            attack: knob_to_env_time(attack, 0.0015, 3.0),
+            decay: knob_to_env_time(decay, 0.005, 4.0),
             sustain: sustain.clamp(0.0, 1.0),
-            release: map_env_time(decay, 0.005, 4.0),
+            release: knob_to_env_time(decay, 0.005, 4.0),
         };
     }
 
     pub fn set_loudness_envelope(&mut self, attack: f32, decay: f32, sustain: f32) {
         self.loud_params = EnvelopeParams {
-            attack: map_env_time(attack, 0.001, 4.5),
-            decay: map_env_time(decay, 0.01, 6.0),
+            attack: knob_to_env_time(attack, 0.001, 4.5),
+            decay: knob_to_env_time(decay, 0.01, 6.0),
             sustain: sustain.clamp(0.0, 1.0),
-            release: map_env_time(decay, 0.01, 6.0),
+            release: knob_to_env_time(decay, 0.01, 6.0),
         };
     }
 
@@ -220,7 +220,7 @@ impl LadderFilter {
     }
 }
 
-fn map_env_time(value: f32, min: f32, max: f32) -> f32 {
+pub fn knob_to_env_time(value: f32, min: f32, max: f32) -> f32 {
     let clamped = value.clamp(0.0, 1.0);
     let ratio = max / min;
     min * ratio.powf(clamped)
