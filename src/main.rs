@@ -58,6 +58,8 @@ const WAVEFORMS: [Waveform; 4] = [
     Waveform::Triangle,
     Waveform::Sine,
 ];
+const OSC_RANGE_MIN: f32 = -2.0;
+const OSC_RANGE_MAX: f32 = 3.0;
 
 #[macroquad::main(window_conf)]
 async fn main() {
@@ -324,7 +326,7 @@ fn compute_panel_layout() -> PanelLayout {
     let loudness_split = modifier_rect.y + modifier_rect.h * 0.58;
     for index in 0..3 {
         let x = modifier_rect.x + index as f32 * (knob_size + column_spacing);
-        loudness_knobs[index] = Rect::new(x, loudness_split + 30.0, knob_size, knob_size);
+        loudness_knobs[index] = Rect::new(x, loudness_split + 78.0, knob_size, knob_size);
     }
 
     let output_knobs = [
@@ -401,6 +403,16 @@ impl PanelState {
         }
     }
 
+    fn osc_range_offset(&self, index: usize) -> f32 {
+        let value = self
+            .oscillator
+            .range
+            .get(index)
+            .map(|knob| knob.value)
+            .unwrap_or(0.5);
+        OSC_RANGE_MIN + value * (OSC_RANGE_MAX - OSC_RANGE_MIN)
+    }
+
     fn set_noise_color(&mut self, color: NoiseColor) {
         self.mod_noise_color = color;
         self.mixer_panel.noise_color = color;
@@ -459,19 +471,13 @@ impl PanelState {
         GLIDE_MIN_SEC + self.controllers.glide.value * (GLIDE_MAX_SEC - GLIDE_MIN_SEC)
     }
 
-    fn apply_pitch(&mut self, dt: f32, vcos: &[VcoHandle]) {
-        let previous = self.pitch_current;
+    fn apply_pitch(&mut self, dt: f32, _vcos: &[VcoHandle]) {
         if dt <= 0.0 || self.glide_time() <= 0.0001 {
             self.pitch_current = self.pitch_target;
         } else {
             let glide = self.glide_time().max(0.0001);
             let step = (dt / glide).clamp(0.0, 1.0);
             self.pitch_current += (self.pitch_target - self.pitch_current) * step;
-        }
-        if (self.pitch_current - previous).abs() > 0.0001 {
-            for (_, tx) in vcos.iter() {
-                let _ = tx.send(VcoCommand::SetVoltage(self.pitch_current));
-            }
         }
     }
 
@@ -543,8 +549,8 @@ struct ControllerKnobs {
 impl ControllerKnobs {
     fn new() -> Self {
         Self {
-            tune: KnobValue::stub(0.5),
-            glide: KnobValue::stub(0.3),
+            tune: KnobValue::implemented(0.5),
+            glide: KnobValue::implemented(0.3),
             modulation_mix: KnobValue::implemented(0.5),
         }
     }
@@ -560,7 +566,7 @@ struct OscillatorKnobs {
 impl OscillatorKnobs {
     fn new() -> Self {
         Self {
-            range: std::array::from_fn(|_| KnobValue::stub(0.5)),
+            range: std::array::from_fn(|_| KnobValue::implemented(0.5)),
             freq: [
                 KnobValue::implemented(0.5),
                 KnobValue::implemented(detune_to_value(0.03)),
@@ -884,6 +890,7 @@ fn draw_oscillators(
 ) {
     for index in 0..3 {
         let range_label = format!("OSC {} RANGE", index + 1);
+        let range_display = format!("{:+.1} OCT", panel_state.osc_range_offset(index));
         draw_knob_widget(
             knob_drag,
             match index {
@@ -894,7 +901,7 @@ fn draw_oscillators(
             layout.osc_range_knobs[index],
             &mut panel_state.oscillator.range[index],
             &range_label,
-            None,
+            Some(&range_display),
         );
         let freq_rect = layout.osc_freq_knobs[index];
         let wave_rect = layout.osc_wave_knobs[index];
@@ -1126,6 +1133,18 @@ fn draw_modifiers(
         line_y,
         1.0,
         AMBER_DIM,
+    );
+    let loudness_label = "LOUDNESS CONTOUR";
+    let label_metrics = measure_text(loudness_label, None, 18, 1.0);
+    draw_text_ex(
+        loudness_label,
+        layout.modifier_rect.x + layout.modifier_rect.w * 0.5 - label_metrics.width * 0.5,
+        line_y + 58.0,
+        TextParams {
+            font_size: 18,
+            color: AMBER,
+            ..Default::default()
+        },
     );
     let cutoff_text = format!("{:.0} Hz", panel_state.cutoff_hz());
     draw_knob_widget(
@@ -1738,6 +1757,8 @@ fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline:
     for (index, (_, tx)) in vcos.iter().enumerate() {
         let detune = panel_state.osc_detune(index);
         let waveform = value_to_waveform(panel_state.oscillator.waveform[index].value);
+        let base_voltage = panel_state.pitch_current + panel_state.osc_range_offset(index);
+        let _ = tx.send(VcoCommand::SetVoltage(base_voltage));
         let _ = tx.send(VcoCommand::SetDetune(detune));
         let _ = tx.send(VcoCommand::SetWaveform(waveform));
     }
@@ -1757,9 +1778,6 @@ fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline:
 }
 
 fn feed_stub_knobs(panel_state: &PanelState) {
-    for rage in &panel_state.oscillator.range {
-        stub_oscillator_range(rage.value);
-    }
     stub_external_input_volume(panel_state.mixer_panel.external_input.value);
     stub_mixer_external_toggle(panel_state.mixer_panel.ext_enabled);
     stub_filter_emphasis(panel_state.modifiers_panel.filter[1].value);
@@ -1771,10 +1789,6 @@ fn feed_stub_knobs(panel_state: &PanelState) {
     stub_loudness_decay(panel_state.modifiers_panel.loudness_env[1].value);
     stub_loudness_sustain(panel_state.modifiers_panel.loudness_env[2].value);
     stub_phones_volume(panel_state.output_panel.phones_volume.value);
-}
-
-fn stub_oscillator_range(_value: f32) {
-    // TODO: Switch oscillator range to follow MiniMoog foot settings.
 }
 
 fn stub_external_input_volume(_value: f32) {

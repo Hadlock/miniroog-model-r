@@ -1,11 +1,7 @@
 # Knobs To Implement
 
-## Oscillator Bank
-- Range – discrete oscillator range selector that re-tunes all voices.
-
 ## Mixer
 - External Input Volume – accept and mix an audio input channel.
-- Noise Volume – route a noise generator into the mixer bus.
 
 ## Modifiers
 - Filter Emphasis – resonance control inside the ladder filter.
