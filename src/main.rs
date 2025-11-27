@@ -51,7 +51,7 @@ const BACKGROUND: Color = Color {
     b: 0.02,
     a: 1.0,
 };
-const DETUNE_RANGE: f32 = 0.5;
+const DETUNE_RANGE: f32 = 8.0;
 const FILTER_MIN_HZ: f32 = 200.0;
 const FILTER_MAX_HZ: f32 = 5_000.0;
 const FILTER_ATTACK_MIN: f32 = 0.0015;
@@ -62,16 +62,65 @@ const LOUD_ATTACK_MIN: f32 = 0.001;
 const LOUD_ATTACK_MAX: f32 = 4.5;
 const LOUD_DECAY_MIN: f32 = 0.01;
 const LOUD_DECAY_MAX: f32 = 6.0;
-const WAVEFORMS: [Waveform; 6] = [
+#[derive(Clone, Copy)]
+struct RangeSetting {
+    label: &'static str,
+    octave_offset: f32,
+}
+
+const OSC1_WAVES: [Waveform; 6] = [
+    Waveform::Triangle,
     Waveform::TriangleSaw,
     Waveform::Saw,
-    Waveform::ReverseSaw,
     Waveform::PulseSquare,
     Waveform::PulseWide,
     Waveform::PulseNarrow,
 ];
-const OSC_RANGE_MIN: f32 = -2.0;
-const OSC_RANGE_MAX: f32 = 3.0;
+
+const OSC2_WAVES: [Waveform; 6] = [
+    Waveform::Triangle,
+    Waveform::TriangleSaw,
+    Waveform::Saw,
+    Waveform::PulseSquare,
+    Waveform::PulseWide,
+    Waveform::PulseNarrow,
+];
+
+const OSC3_WAVES: [Waveform; 6] = [
+    Waveform::Triangle,
+    Waveform::ReverseSaw,
+    Waveform::Saw,
+    Waveform::PulseSquare,
+    Waveform::PulseWide,
+    Waveform::PulseNarrow,
+];
+
+const OSC_RANGE_SETTINGS: [RangeSetting; 6] = [
+    RangeSetting {
+        label: "LO",
+        octave_offset: -5.0,
+    },
+    RangeSetting {
+        label: "32'",
+        octave_offset: -2.0,
+    },
+    RangeSetting {
+        label: "16'",
+        octave_offset: -1.0,
+    },
+    RangeSetting {
+        label: "8'",
+        octave_offset: 0.0,
+    },
+    RangeSetting {
+        label: "4'",
+        octave_offset: 1.0,
+    },
+    RangeSetting {
+        label: "2'",
+        octave_offset: 2.0,
+    },
+];
 
 #[macroquad::main(window_conf)]
 async fn main() {
@@ -120,6 +169,10 @@ async fn main() {
         );
         if is_key_pressed(KeyCode::Tab) {
             panel_state.cycle_noise_color();
+            log_mode(
+                "Noise generator",
+                panel_state.mixer_panel.noise_color.label(),
+            );
         }
         if let Some(message) = controller.poll(mouse_changed) {
             panel_state.last_midi = message.midi_note;
@@ -519,14 +572,18 @@ impl PanelState {
         }
     }
 
-    fn osc_range_offset(&self, index: usize) -> f32 {
+    fn osc_range_setting(&self, index: usize) -> RangeSetting {
         let value = self
             .oscillator
             .range
             .get(index)
             .map(|knob| knob.value)
             .unwrap_or(0.5);
-        OSC_RANGE_MIN + value * (OSC_RANGE_MAX - OSC_RANGE_MIN)
+        range_setting_from_value(value)
+    }
+
+    fn osc_range_offset(&self, index: usize) -> f32 {
+        self.osc_range_setting(index).octave_offset
     }
 
     fn set_noise_color(&mut self, color: NoiseColor) {
@@ -779,16 +836,16 @@ struct OscillatorKnobs {
 impl OscillatorKnobs {
     fn new() -> Self {
         Self {
-            range: std::array::from_fn(|_| KnobValue::implemented(0.5)),
+            range: std::array::from_fn(|_| KnobValue::implemented(range_value_from_index(3))),
             freq: [
                 KnobValue::implemented(0.5),
                 KnobValue::implemented(detune_to_value(0.03)),
                 KnobValue::implemented(detune_to_value(-0.02)),
             ],
             waveform: [
-                KnobValue::implemented(waveform_to_value(Waveform::TriangleSaw)),
-                KnobValue::implemented(waveform_to_value(Waveform::TriangleSaw)),
-                KnobValue::implemented(waveform_to_value(Waveform::TriangleSaw)),
+                KnobValue::implemented(waveform_to_value(Waveform::Triangle, &OSC1_WAVES)),
+                KnobValue::implemented(waveform_to_value(Waveform::Triangle, &OSC2_WAVES)),
+                KnobValue::implemented(waveform_to_value(Waveform::Triangle, &OSC3_WAVES)),
             ],
         }
     }
@@ -910,6 +967,15 @@ fn mouse_position_vec() -> Vec2 {
     vec2(x, y)
 }
 
+fn log_toggle(name: &str, state: bool) {
+    let value = if state { "ON" } else { "OFF" };
+    println!("{name} set to {value}");
+}
+
+fn log_mode(name: &str, value: &str) {
+    println!("{name} set to {value}");
+}
+
 fn handle_debug_toggle(state: &mut DebugWindowState, mouse: Vec2) {
     let button_rect = Rect::new(SCREEN_WIDTH - 170.0, PANEL_HEIGHT + 25.0, 140.0, 36.0);
     if state.open {
@@ -951,6 +1017,10 @@ fn handle_mixer_switches(panel_state: &mut PanelState, layout: &PanelLayout) {
     }
     if layout.noise_selector_rect.contains(mouse) {
         panel_state.cycle_noise_color();
+        log_mode(
+            "Noise generator",
+            panel_state.mixer_panel.noise_color.label(),
+        );
     }
 }
 
@@ -961,24 +1031,45 @@ fn handle_controller_switches(panel_state: &mut PanelState, layout: &PanelLayout
     let mouse = mouse_position_vec();
     if layout.controller_mod_toggle.contains(mouse) {
         panel_state.osc_modulation = !panel_state.osc_modulation;
+        log_toggle("Oscillator modulation", panel_state.osc_modulation);
     }
     if layout.controller_osc3_toggle.contains(mouse) {
         panel_state.osc3_control = !panel_state.osc3_control;
+        log_toggle("Oscillator 3 control", panel_state.osc3_control);
     }
     if layout.controller_mod_source_toggle.contains(mouse) {
         panel_state.mod_source_noise = !panel_state.mod_source_noise;
+        log_mode(
+            "Mod source",
+            if panel_state.mod_source_noise {
+                "NOISE"
+            } else {
+                "LFO"
+            },
+        );
     }
     if layout.controller_mod_target_toggle.contains(mouse) {
         panel_state.mod_target_filter = !panel_state.mod_target_filter;
+        log_mode(
+            "Mod destination",
+            if panel_state.mod_target_filter {
+                "FILTER EG"
+            } else {
+                "OSC 3"
+            },
+        );
     }
     if layout.controller_glide_switch.contains(mouse) {
         panel_state.glide_enabled = !panel_state.glide_enabled;
+        log_toggle("Glide", panel_state.glide_enabled);
     }
     if layout.controller_decay_switch.contains(mouse) {
         panel_state.decay_enabled = !panel_state.decay_enabled;
+        log_toggle("Decay", panel_state.decay_enabled);
     }
     if layout.controller_s_trigger_button.contains(mouse) {
         panel_state.request_s_trigger();
+        println!("S-TRIG fired");
     }
 }
 
@@ -1255,8 +1346,7 @@ fn draw_oscillators(
     layout: &PanelLayout,
 ) {
     for index in 0..3 {
-        let range_label = format!("OSC {} RANGE", index + 1);
-        let range_display = format!("{:+.1} OCT", panel_state.osc_range_offset(index));
+        let range_label = panel_state.osc_range_setting(index).label;
         draw_knob_widget(
             knob_drag,
             match index {
@@ -1266,8 +1356,8 @@ fn draw_oscillators(
             },
             layout.osc_range_knobs[index],
             &mut panel_state.oscillator.range[index],
-            &range_label,
-            Some(&range_display),
+            &format!("OSC {} RANGE", index + 1),
+            Some(range_label),
         );
         let freq_rect = layout.osc_freq_knobs[index];
         let wave_rect = layout.osc_wave_knobs[index];
@@ -1286,7 +1376,7 @@ fn draw_oscillators(
             &freq_label,
             Some(&detune_label),
         );
-        let waveform = value_to_waveform(panel_state.oscillator.waveform[index].value);
+        let waveform = value_to_waveform(index, panel_state.oscillator.waveform[index].value);
         let wave_label = format!("OSC {} WAVE", index + 1);
         draw_knob_widget(
             knob_drag,
@@ -1693,8 +1783,8 @@ fn draw_knob_widget(
         1.0,
         Color::new(0.4, 0.4, 0.4, 0.3),
     );
-    let start_angle = -150.0f32.to_radians();
-    let angle_range = 300.0f32.to_radians();
+    let angle_range = 270.0f32.to_radians();
+    let start_angle = -std::f32::consts::FRAC_PI_2 - angle_range * 0.5;
     let theta = start_angle + knob.value.clamp(0.0, 1.0) * angle_range;
     let pointer = vec2(theta.cos(), theta.sin()) * radius * 0.8;
     draw_line(
@@ -2142,20 +2232,38 @@ fn draw_frequency(rect: Rect, spectrum: &[f32], sample_rate: f32) {
     );
 }
 
-fn value_to_waveform(value: f32) -> Waveform {
-    let mut index = (value.clamp(0.0, 0.999) * WAVEFORMS.len() as f32) as usize;
-    if index >= WAVEFORMS.len() {
-        index = WAVEFORMS.len() - 1;
+fn value_to_waveform(osc_index: usize, value: f32) -> Waveform {
+    let waves = match osc_index {
+        0 => &OSC1_WAVES,
+        1 => &OSC2_WAVES,
+        _ => &OSC3_WAVES,
+    };
+    let mut index = (value.clamp(0.0, 0.999) * waves.len() as f32) as usize;
+    if index >= waves.len() {
+        index = waves.len() - 1;
     }
-    WAVEFORMS[index]
+    waves[index]
 }
 
-fn waveform_to_value(waveform: Waveform) -> f32 {
-    if let Some(index) = WAVEFORMS.iter().position(|w| *w == waveform) {
-        (index as f32 + 0.5) / WAVEFORMS.len() as f32
+fn waveform_to_value(waveform: Waveform, waves: &[Waveform]) -> f32 {
+    if let Some(index) = waves.iter().position(|w| *w == waveform) {
+        (index as f32 + 0.5) / waves.len() as f32
     } else {
         0.5
     }
+}
+
+fn range_setting_from_value(value: f32) -> RangeSetting {
+    let mut index = (value.clamp(0.0, 0.999) * OSC_RANGE_SETTINGS.len() as f32) as usize;
+    if index >= OSC_RANGE_SETTINGS.len() {
+        index = OSC_RANGE_SETTINGS.len() - 1;
+    }
+    OSC_RANGE_SETTINGS[index]
+}
+
+fn range_value_from_index(index: usize) -> f32 {
+    let max_index = OSC_RANGE_SETTINGS.len().saturating_sub(1).max(1);
+    (index.min(max_index)) as f32 / max_index as f32
 }
 
 fn format_env_time(seconds: f32) -> String {
@@ -2178,7 +2286,7 @@ fn sync_audio_from_panel(panel_state: &PanelState, vcos: &[VcoHandle], pipeline:
     let pitch_mod = panel_state.modulation_pitch_offset();
     for (index, (_, tx)) in vcos.iter().enumerate() {
         let detune = panel_state.osc_detune(index);
-        let waveform = value_to_waveform(panel_state.oscillator.waveform[index].value);
+        let waveform = value_to_waveform(index, panel_state.oscillator.waveform[index].value);
         let mut base_voltage = if index == 2 && !panel_state.osc3_control {
             panel_state.osc_range_offset(index)
         } else {

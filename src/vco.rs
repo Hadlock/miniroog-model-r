@@ -4,6 +4,7 @@ use tokio::runtime::Runtime;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Waveform {
+    Triangle,
     TriangleSaw,
     Saw,
     ReverseSaw,
@@ -15,6 +16,7 @@ pub enum Waveform {
 impl Waveform {
     pub fn label(&self) -> &'static str {
         match self {
+            Waveform::Triangle => "TRIANGLE",
             Waveform::TriangleSaw => "TRI/SAW",
             Waveform::Saw => "SAW",
             Waveform::ReverseSaw => "REV SAW",
@@ -26,6 +28,7 @@ impl Waveform {
 
     pub fn sample(&self, phase: f32) -> f32 {
         match self {
+            Waveform::Triangle => 4.0 * (phase - 0.5).abs() - 1.0,
             Waveform::TriangleSaw => {
                 let tri = 4.0 * (phase - 0.5).abs() - 1.0;
                 let saw = 2.0 * (phase - 0.5);
